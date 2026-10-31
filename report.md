@@ -1,6 +1,6 @@
 ---
-title: Homework 1 -- Your Title Here
-author: John Doe
+title: Homework 1 -- Multiple Object Video Detection
+author: Lili Alania, Iryna Svyrydenko
 course: Artificial Intelligence · UCU
 date: 2026-10-12
 ---
