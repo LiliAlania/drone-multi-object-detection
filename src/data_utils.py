@@ -16,9 +16,27 @@ CLASS_NAMES = [
     "person", "bicycle", "car", "van", "truck", "tricycle", "bus", "motor"
 ]
 
+# Pixel precision used to decide that two ignored regions are the same box.
+IGNORE_DEDUP_NDIGITS = 2
 
-def load_coco(coco_path: str | Path, split: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load COCO metadata as image and annotation frames with clip/frame dimensions."""
+
+# ---------------------------------------------------------------------------
+# Loading and splitting
+# ---------------------------------------------------------------------------
+
+def load_coco(
+    coco_path: str | Path,
+    split: str,
+    dedup_ignored: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load COCO metadata as image and annotation frames with clip/frame dimensions.
+
+    In the VisDrone-VID COCO export every ignored region (iscrowd=1) is repeated
+    several times per frame (orig_category_id 0 "ignored region" and 11 "others"
+    share the same boxes), while the YOLO ``ignore/*.txt`` files hold each region
+    once. With ``dedup_ignored=True`` (default) these duplicates are dropped; the
+    number removed is stored in ``annotations.attrs["ignored_duplicates_removed"]``.
+    """
     with Path(coco_path).open(encoding="utf-8") as file:
         coco = json.load(file)
     images = pd.DataFrame(coco.get("images", []))
@@ -37,23 +55,53 @@ def load_coco(coco_path: str | Path, split: str) -> tuple[pd.DataFrame, pd.DataF
         annotations = pd.DataFrame(
             columns=["image_id", "category_id", "bbox", "iscrowd"]
         )
+    for column in (
+        "iscrowd", "category_id", "track_id", "orig_category_id", "occlusion", "truncation"
+    ):
+        if column not in annotations:
+            annotations[column] = 0 if column == "iscrowd" else np.nan
+    annotations["iscrowd"] = (
+        pd.to_numeric(annotations["iscrowd"], errors="coerce").fillna(0).astype(int)
+    )
+
+    removed = 0
+    if dedup_ignored:
+        annotations, removed = dedup_ignored_regions(annotations)
+
     metadata = images[["id", "clip", "frame_id", "width", "height", "split"]].rename(
         columns={"id": "image_id"}
     )
     annotations = annotations.merge(metadata, on="image_id", how="left")
-    if "iscrowd" not in annotations:
-        annotations["iscrowd"] = 0
-    if "category_id" not in annotations:
-        annotations["category_id"] = np.nan
-    if "track_id" not in annotations:
-        annotations["track_id"] = np.nan
-    if "orig_category_id" not in annotations:
-        annotations["orig_category_id"] = np.nan
-    if "occlusion" not in annotations:
-        annotations["occlusion"] = np.nan
-    if "truncation" not in annotations:
-        annotations["truncation"] = np.nan
+    annotations.attrs["ignored_duplicates_removed"] = removed
     return images, annotations
+
+
+def dedup_ignored_regions(
+    annotations: pd.DataFrame, ndigits: int = IGNORE_DEDUP_NDIGITS
+) -> tuple[pd.DataFrame, int]:
+    """Keep one ignored region (iscrowd=1) per (image_id, bbox); targets are untouched.
+
+    Returns the filtered frame (with a fresh index) and the number of rows removed.
+    """
+    if annotations.empty or "bbox" not in annotations:
+        return annotations.reset_index(drop=True), 0
+    crowd = _crowd_mask(annotations).to_numpy()
+    if not crowd.any():
+        return annotations.reset_index(drop=True), 0
+    keys = [
+        (image_id, tuple(round(float(value), ndigits) for value in bbox))
+        for image_id, bbox in zip(
+            annotations["image_id"].to_numpy()[crowd],
+            annotations["bbox"].to_numpy()[crowd],
+        )
+    ]
+    duplicate = np.zeros(len(annotations), dtype=bool)
+    duplicate[np.flatnonzero(crowd)] = pd.Series(keys).duplicated().to_numpy()
+    return annotations.loc[~duplicate].reset_index(drop=True), int(duplicate.sum())
+
+
+def _crowd_mask(annotations: pd.DataFrame) -> pd.Series:
+    return pd.to_numeric(annotations["iscrowd"], errors="coerce").fillna(0).eq(1)
 
 
 def _clip_from_path(file_name: str) -> str:
@@ -72,8 +120,8 @@ def split_annotations(
     annotations: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split target annotations (iscrowd=0) from ignored regions (iscrowd=1)."""
-    crowd = pd.to_numeric(annotations["iscrowd"], errors="coerce").fillna(0)
-    return annotations.loc[crowd.eq(0)].copy(), annotations.loc[crowd.eq(1)].copy()
+    crowd = _crowd_mask(annotations)
+    return annotations.loc[~crowd].copy(), annotations.loc[crowd].copy()
 
 
 def namespace_image_ids(
@@ -100,6 +148,10 @@ def namespace_image_ids(
     return images, annotations
 
 
+# ---------------------------------------------------------------------------
+# COCO <-> YOLO consistency
+# ---------------------------------------------------------------------------
+
 def coco_xywh_to_yolo(
     bbox: Sequence[float], image_width: float, image_height: float
 ) -> tuple[float, float, float, float]:
@@ -121,43 +173,46 @@ def check_yolo_consistency(
     seed: int = 42,
     atol: float = 1e-5,
 ) -> dict[str, int]:
-    """Assert sampled YOLO target/ignore files match their COCO normalized boxes."""
-    images, annotations = load_coco(coco_path, split)
+    """Assert sampled YOLO target/ignore files match their COCO normalized boxes.
+
+    Ignored regions are deduplicated in COCO before comparison (see ``load_coco``).
+    Rows are matched one-to-one within ``atol`` instead of relying on sort order,
+    so near-equal coordinates cannot be paired with the wrong box.
+    """
+    images, annotations = load_coco(coco_path, split, dedup_ignored=True)
     by_image = {int(key): group for key, group in annotations.groupby("image_id")}
     image_lookup = images.set_index("id")
     rng = random.Random(seed)
-    candidates = list(by_image)
+    candidates = sorted(by_image)
     selected = rng.sample(candidates, min(sample_size, len(candidates)))
     compared_target = compared_ignore = 0
     root = Path(dataset_root)
     for image_id in selected:
         image = image_lookup.loc[image_id]
+        width, height = float(image["width"]), float(image["height"])
         base = _resolve_image_path(root, str(image["file_name"]))
-        label_path = _label_path(base, "labels")
-        ignore_path = _label_path(base, "ignore")
         rows = by_image[image_id]
-        for crowd, path in ((0, label_path), (1, ignore_path)):
-            expected = rows.loc[pd.to_numeric(rows["iscrowd"], errors="coerce").fillna(0).eq(crowd)]
+        crowd_mask = _crowd_mask(rows)
+        for crowd, folder in ((0, "labels"), (1, "ignore")):
+            path = _label_path(base, folder)
+            expected = rows.loc[crowd_mask.eq(bool(crowd))]
             actual_rows = _read_yolo_rows(path, has_class=(crowd == 0))
             expected_rows: list[tuple[float, ...]] = []
-            for _, row in expected.iterrows():
-                coords = coco_xywh_to_yolo(
-                    row["bbox"], float(image["width"]), float(image["height"])
-                )
+            for row in expected.itertuples(index=False):
+                coords = coco_xywh_to_yolo(row.bbox, width, height)
                 if crowd == 0:
-                    expected_rows.append((int(row["category_id"]) - 1, *coords))
+                    expected_rows.append((float(int(row.category_id) - 1), *coords))
                 else:
                     expected_rows.append(coords)
-            actual_sorted = sorted(actual_rows)
-            expected_sorted = sorted(expected_rows)
-            assert len(actual_sorted) == len(expected_sorted), (
+            assert len(actual_rows) == len(expected_rows), (
                 f"Annotation count mismatch for {path}: "
-                f"YOLO={len(actual_sorted)}, COCO={len(expected_sorted)}"
+                f"YOLO={len(actual_rows)}, COCO={len(expected_rows)}"
             )
-            for actual, expected_row in zip(actual_sorted, expected_sorted):
-                assert np.allclose(actual, expected_row, atol=atol, rtol=0), (
-                    f"Box mismatch in {path}: YOLO={actual}, COCO={expected_row}"
-                )
+            unmatched = _unmatched_rows(actual_rows, expected_rows, atol)
+            assert not unmatched, (
+                f"Box mismatch in {path}: COCO rows without a YOLO match "
+                f"(first 3): {unmatched[:3]}"
+            )
             if crowd == 0:
                 compared_target += len(expected_rows)
             else:
@@ -166,7 +221,29 @@ def check_yolo_consistency(
         "sampled_frames": len(selected),
         "target_boxes_compared": compared_target,
         "ignored_regions_compared": compared_ignore,
+        "ignored_duplicates_removed": int(
+            annotations.attrs.get("ignored_duplicates_removed", 0)
+        ),
     }
+
+
+def _unmatched_rows(
+    actual: Sequence[tuple[float, ...]],
+    expected: Sequence[tuple[float, ...]],
+    atol: float,
+) -> list[tuple[float, ...]]:
+    """Greedy one-to-one matching; returns expected rows with no actual counterpart."""
+    remaining = [np.asarray(row, dtype=float) for row in actual]
+    unmatched = []
+    for row in expected:
+        target = np.asarray(row, dtype=float)
+        for index, candidate in enumerate(remaining):
+            if np.allclose(candidate, target, atol=atol, rtol=0):
+                remaining.pop(index)
+                break
+        else:
+            unmatched.append(tuple(row))
+    return unmatched
 
 
 def _resolve_image_path(root: Path, file_name: str) -> Path:
@@ -181,7 +258,9 @@ def _resolve_image_path(root: Path, file_name: str) -> Path:
 def _label_path(image_path: Path, folder: str) -> Path:
     parts = list(image_path.parts)
     if "images" in parts:
-        parts[parts.index("images")] = folder
+        # Replace the last "images" component so parent folders named "images" are safe.
+        index = len(parts) - 1 - parts[::-1].index("images")
+        parts[index] = folder
         return Path(*parts).with_suffix(".txt")
     return image_path.parent.parent / folder / image_path.parent.name / (
         image_path.stem + ".txt"
@@ -192,14 +271,20 @@ def _read_yolo_rows(path: Path, has_class: bool) -> list[tuple[float, ...]]:
     if not path.exists():
         return []
     rows = []
+    expected_length = 5 if has_class else 4
     for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
         values = [float(value) for value in line.split()]
-        expected_length = 5 if has_class else 4
         if len(values) != expected_length:
             raise ValueError(f"Expected {expected_length} values per row in {path}")
         rows.append(tuple(values))
     return rows
 
+
+# ---------------------------------------------------------------------------
+# Dataset overview and example selection
+# ---------------------------------------------------------------------------
 
 def dataset_overview(
     image_frames: dict[str, pd.DataFrame], test_csv: str | Path | None = None
@@ -211,15 +296,18 @@ def dataset_overview(
         test["split"] = "test"
         test["clip"] = test["clip"].astype(str)
         images = pd.concat([images, test], ignore_index=True, sort=False)
+    images["resolution"] = (
+        pd.to_numeric(images["width"]).round().astype("Int64").astype(str)
+        + "x"
+        + pd.to_numeric(images["height"]).round().astype("Int64").astype(str)
+    )
     per_clip = (
         images.groupby(["split", "clip"], dropna=False)
-        .agg(frames=("file_name", "nunique"))
+        .agg(
+            frames=("file_name", "nunique"),
+            resolution=("resolution", lambda values: ", ".join(sorted(values.unique()))),
+        )
         .reset_index()
-    )
-    per_clip["resolution"] = (
-        images["width"].astype("Int64").astype(str)
-        + "x"
-        + images["height"].astype("Int64").astype(str)
     )
     resolution = (
         images.groupby(["split", "resolution"], dropna=False)
@@ -250,7 +338,11 @@ def select_visual_examples(
     ignored_annotations: pd.DataFrame,
     count: int = 6,
 ) -> pd.DataFrame:
-    """Select varied frames: sparse, dense, smallest/largest, and ignore-heavy."""
+    """Select varied frames: sparse, dense, smallest/largest, and ignore-heavy.
+
+    The first picks come from different clips; remaining slots are filled with the
+    most ignore-heavy, densest frames. Rows are returned in selection order.
+    """
     density = target_annotations.groupby("image_id").size().rename("objects")
     ignore_count = ignored_annotations.groupby("image_id").size().rename("ignored")
     candidates = images.copy()
@@ -259,6 +351,7 @@ def select_visual_examples(
     candidates[["objects", "ignored"]] = candidates[["objects", "ignored"]].fillna(0)
     candidates["pixels"] = candidates["width"] * candidates["height"]
     chosen: list[Any] = []
+    used_clips: set[str] = set()
     for column, ascending in (
         ("objects", True),
         ("objects", False),
@@ -266,20 +359,26 @@ def select_visual_examples(
         ("pixels", False),
         ("ignored", False),
     ):
-        for image_id in candidates.sort_values(column, ascending=ascending)["id"]:
-            if image_id not in chosen and (
-                len(chosen) == 0
-                or candidates.loc[candidates["id"].eq(image_id), "clip"].iloc[0]
-                not in candidates.loc[candidates["id"].isin(chosen), "clip"].astype(str).tolist()
-            ):
+        ordered = candidates.sort_values(column, ascending=ascending, kind="mergesort")
+        for image_id, clip in zip(ordered["id"], ordered["clip"].astype(str)):
+            if image_id not in chosen and clip not in used_clips:
                 chosen.append(image_id)
+                used_clips.add(clip)
                 break
-    for image_id in candidates.sort_values(["ignored", "objects"], ascending=False)["id"]:
+    ordered = candidates.sort_values(["ignored", "objects"], ascending=False, kind="mergesort")
+    for image_id in ordered["id"]:
         if len(chosen) >= count:
             break
         if image_id not in chosen:
             chosen.append(image_id)
-    return candidates.loc[candidates["id"].isin(chosen)].head(count).copy()
+    return candidates.set_index("id", drop=False).loc[chosen[:count]].reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Box geometry, sizes, anchors
+# ---------------------------------------------------------------------------
+
+_BOX_COLUMNS = ("box_w", "box_h", "area", "sqrt_area", "aspect_ratio")
 
 
 def add_box_dimensions(
@@ -290,7 +389,11 @@ def add_box_dimensions(
     if target_only and "iscrowd" in frame:
         frame, _ = split_annotations(frame)
     if frame.empty:
-        return frame.assign(box_w=pd.Series(dtype=float), box_h=pd.Series(dtype=float))
+        return frame.assign(
+            **{column: pd.Series(dtype=float) for column in _BOX_COLUMNS},
+            class_id=pd.Series(dtype=float),
+            class_name=pd.Series(dtype=object),
+        )
     boxes = np.asarray(frame["bbox"].tolist(), dtype=float)
     frame["box_w"] = boxes[:, 2]
     frame["box_h"] = boxes[:, 3]
@@ -305,6 +408,17 @@ def add_box_dimensions(
             else "unknown"
         )
     return frame
+
+
+def _attach_image_size(frame: pd.DataFrame, image_sizes: pd.DataFrame) -> pd.DataFrame:
+    """Attach image width/height by image_id, replacing any existing columns.
+
+    ``load_coco`` already merges width/height into annotations; merging again
+    without dropping them would create width_x/width_y columns.
+    """
+    dims = image_sizes[["id", "width", "height"]].rename(columns={"id": "image_id"})
+    frame = frame.drop(columns=[column for column in ("width", "height") if column in frame])
+    return frame.merge(dims, on="image_id", how="left")
 
 
 def size_bucket_summary(annotations: pd.DataFrame) -> pd.DataFrame:
@@ -331,9 +445,7 @@ def resized_small_side_shares(
     annotations: pd.DataFrame, image_sizes: pd.DataFrame, image_sizes_list: Sequence[int]
 ) -> pd.DataFrame:
     """Share of boxes below 4/8/16 px on their smaller side after square letterboxing."""
-    frame = add_box_dimensions(annotations)
-    dims = image_sizes[["id", "width", "height"]].rename(columns={"id": "image_id"})
-    frame = frame.merge(dims, on="image_id", how="left", suffixes=("", "_image"))
+    frame = _attach_image_size(add_box_dimensions(annotations), image_sizes)
     records = []
     for imgsz in image_sizes_list:
         smaller = frame[["box_w", "box_h"]].min(axis=1) * (
@@ -361,9 +473,7 @@ def kmeans_anchors(
     max_iterations: int = 100,
 ) -> dict[str, Any]:
     """YOLOv2-style IoU k-means on letterboxed pixel width/height pairs."""
-    frame = add_box_dimensions(annotations)
-    sizes = image_sizes[["id", "width", "height"]].rename(columns={"id": "image_id"})
-    frame = frame.merge(sizes, on="image_id", how="left")
+    frame = _attach_image_size(add_box_dimensions(annotations), image_sizes)
     scale = imgsz / frame[["width", "height"]].max(axis=1).to_numpy(dtype=float)
     boxes = frame[["box_w", "box_h"]].to_numpy(dtype=float) * scale[:, None]
     boxes = boxes[np.isfinite(boxes).all(axis=1) & (boxes > 0).all(axis=1)]
@@ -372,8 +482,7 @@ def kmeans_anchors(
     rng = np.random.default_rng(seed)
     anchors = boxes[rng.choice(len(boxes), size=k, replace=False)].copy()
     for _ in range(max_iterations):
-        ious = _box_iou_wh(boxes, anchors)
-        assignments = ious.argmax(axis=1)
+        assignments = _box_iou_wh(boxes, anchors).argmax(axis=1)
         updated = anchors.copy()
         for cluster in range(k):
             members = boxes[assignments == cluster]
@@ -381,10 +490,10 @@ def kmeans_anchors(
                 updated[cluster] = np.median(members, axis=0)
             else:
                 updated[cluster] = boxes[rng.integers(len(boxes))]
-        if np.allclose(updated, anchors):
-            anchors = updated
-            break
+        converged = np.allclose(updated, anchors)
         anchors = updated
+        if converged:
+            break
     mean_best_iou = float(_box_iou_wh(boxes, anchors).max(axis=1).mean())
     anchors = anchors[np.argsort(anchors[:, 0] * anchors[:, 1])]
     return {
@@ -407,6 +516,10 @@ def _box_iou_wh(boxes: np.ndarray, anchors: np.ndarray) -> np.ndarray:
     )
 
 
+# ---------------------------------------------------------------------------
+# Density and ignored regions
+# ---------------------------------------------------------------------------
+
 def density_summary(
     image_frames: pd.DataFrame, target_annotations: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, float]]:
@@ -419,7 +532,7 @@ def density_summary(
     per_clip = density.groupby("clip")["objects"].agg(["count", "median", "max"]).reset_index()
     stats = {
         "frames": int(len(density)),
-        "p99_objects_per_frame": float(density["objects"].quantile(0.99)),
+        "p99_objects_per_frame": float(density["objects"].quantile(0.99)) if len(density) else 0.0,
         "max_objects_per_frame": int(density["objects"].max()) if len(density) else 0,
     }
     return density, per_clip, stats
@@ -430,65 +543,69 @@ def ignored_region_summary(
     targets: pd.DataFrame,
     ignored: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Summarize ignored-frame incidence, union area fraction, and target intersections."""
-    target_rows = add_box_dimensions(targets, target_only=False)
-    ignored_rows = add_box_dimensions(ignored, target_only=False)
+    """Summarize ignored-frame incidence, union area fraction, and target intersections.
+
+    Returns ``(per_clip, stats)``. Pass deduplicated ignored regions (the default
+    from ``load_coco``), otherwise region counts are inflated.
+    """
+    ignored_boxes = {
+        image_id: [tuple(map(float, bbox)) for bbox in group["bbox"]]
+        for image_id, group in ignored.groupby("image_id")
+    }
     frame_records = []
-    by_image = {key: group for key, group in ignored_rows.groupby("image_id")}
-    for _, image in images.iterrows():
-        group = by_image.get(image["id"], ignored_rows.iloc[0:0])
-        rects = []
-        for _, row in group.iterrows():
-            x, y, width, height = map(float, row["bbox"])
-            rects.append(
-                (
-                    max(0.0, x),
-                    max(0.0, y),
-                    min(float(image["width"]), x + width),
-                    min(float(image["height"]), y + height),
-                )
-            )
-        area = _rectangle_union_area(rects)
+    for image_id, clip, width, height in images[["id", "clip", "width", "height"]].itertuples(
+        index=False
+    ):
+        width, height = float(width), float(height)
+        boxes = ignored_boxes.get(image_id, [])
+        rects = [
+            (max(0.0, x), max(0.0, y), min(width, x + w), min(height, y + h))
+            for x, y, w, h in boxes
+        ]
         frame_records.append(
             {
-                "image_id": image["id"],
-                "clip": image["clip"],
-                "ignored_regions": len(group),
-                "ignored_area_fraction": area / (float(image["width"]) * float(image["height"])),
+                "image_id": image_id,
+                "clip": clip,
+                "ignored_regions": len(boxes),
+                "ignored_area_fraction": _rectangle_union_area(rects) / (width * height),
             }
         )
-    frames = pd.DataFrame(frame_records)
+    frames = pd.DataFrame(
+        frame_records,
+        columns=["image_id", "clip", "ignored_regions", "ignored_area_fraction"],
+    )
+
     overlaps = 0
-    for image_id, igroup in ignored_rows.groupby("image_id"):
-        tgroup = target_rows.loc[target_rows["image_id"].eq(image_id)]
-        for _, target in tgroup.iterrows():
-            x1, y1, w1, h1 = map(float, target["bbox"])
-            for _, ignore in igroup.iterrows():
-                x2, y2, w2, h2 = map(float, ignore["bbox"])
-                if min(x1 + w1, x2 + w2) > max(x1, x2) and min(
-                    y1 + h1, y2 + h2
-                ) > max(y1, y2):
-                    overlaps += 1
-                    break
+    for image_id, tgroup in targets.groupby("image_id"):
+        iboxes = ignored_boxes.get(image_id)
+        if not iboxes:
+            continue
+        for x1, y1, w1, h1 in (tuple(map(float, bbox)) for bbox in tgroup["bbox"]):
+            if any(
+                min(x1 + w1, x2 + w2) > max(x1, x2) and min(y1 + h1, y2 + h2) > max(y1, y2)
+                for x2, y2, w2, h2 in iboxes
+            ):
+                overlaps += 1
+
     stats = pd.DataFrame(
         [
             {
                 "frames_with_ignored": int(frames["ignored_regions"].gt(0).sum()),
                 "frames": int(len(frames)),
-                "frames_with_ignored_pct": 100
-                * float(frames["ignored_regions"].gt(0).mean()),
-                "mean_ignored_area_pct": 100
-                * float(frames["ignored_area_fraction"].mean()),
+                "frames_with_ignored_pct": 100 * float(frames["ignored_regions"].gt(0).mean()),
+                "ignored_regions": int(frames["ignored_regions"].sum()),
+                "mean_ignored_area_pct": 100 * float(frames["ignored_area_fraction"].mean()),
                 "target_boxes_intersecting_ignored": overlaps,
-                "target_boxes": len(target_rows),
+                "target_boxes": int(len(targets)),
             }
         ]
     )
-    return frames.groupby("clip").agg(
+    per_clip = frames.groupby("clip").agg(
         frames=("image_id", "size"),
         frames_with_ignored=("ignored_regions", lambda values: int(values.gt(0).sum())),
         mean_ignored_area_pct=("ignored_area_fraction", lambda values: 100 * values.mean()),
-    ).reset_index(), stats
+    ).reset_index()
+    return per_clip, stats
 
 
 def _rectangle_union_area(rectangles: Iterable[tuple[float, float, float, float]]) -> float:
@@ -514,35 +631,42 @@ def _rectangle_union_area(rectangles: Iterable[tuple[float, float, float, float]
     return area
 
 
+# ---------------------------------------------------------------------------
+# Temporal structure, folds, subsampling
+# ---------------------------------------------------------------------------
+
 def temporal_redundancy(
     images: pd.DataFrame,
     targets: pd.DataFrame,
     steps: Sequence[int],
 ) -> pd.DataFrame:
     """Compute same-track IoU at frame lags and unseen-track share for each sampling step."""
-    frame = add_box_dimensions(targets, target_only=False)
-    if "track_id" not in frame:
+    if "track_id" not in targets:
         raise ValueError("Annotations do not include track_id")
-    frame = frame.loc[frame["track_id"].notna()].copy()
+    frame = targets.loc[targets["track_id"].notna()].copy()
     ordered_frames = images.sort_values(["clip", "frame_id", "file_name"]).copy()
     ordered_frames["frame_rank"] = ordered_frames.groupby("clip").cumcount()
     frame_ranks = ordered_frames.set_index("id")["frame_rank"]
+    frame_clips = ordered_frames.set_index("id")["clip"].astype(str)
     frame["frame_rank"] = frame["image_id"].map(frame_ranks)
+    frame["clip"] = frame["image_id"].map(frame_clips)
+    frame = frame.loc[frame["frame_rank"].notna()]
+
+    tracks = []
+    for (clip, track_id), group in frame.groupby(["clip", "track_id"]):
+        indexed = {
+            int(rank): np.asarray(bbox, dtype=float)
+            for rank, bbox in zip(group["frame_rank"], group["bbox"])
+        }
+        tracks.append(((clip, track_id), indexed))
+
     results = []
     for step in steps:
         ious: list[float] = []
-        tracks_seen: set[tuple[str, Any]] = set()
-        all_tracks: set[tuple[str, Any]] = set()
-        for (clip, track_id), group in frame.groupby(["clip", "track_id"]):
-            group = group.sort_values("frame_rank")
-            all_tracks.add((str(clip), track_id))
-            if (group["frame_rank"].astype(int) % step == 0).any():
-                tracks_seen.add((str(clip), track_id))
-            indexed = {
-                int(row.frame_rank): np.asarray(row.bbox, dtype=float)
-                for row in group.itertuples()
-                if pd.notna(row.frame_rank)
-            }
+        never_sampled = 0
+        for _, indexed in tracks:
+            if not any(rank % step == 0 for rank in indexed):
+                never_sampled += 1
             for rank, box in indexed.items():
                 next_box = indexed.get(rank + step)
                 if next_box is not None:
@@ -552,12 +676,10 @@ def temporal_redundancy(
                 "step": int(step),
                 "mean_track_iou": float(np.mean(ious)) if ious else np.nan,
                 "track_pairs": len(ious),
-                "tracks_never_sampled_pct": 100
-                * (len(all_tracks) - len(tracks_seen))
-                / len(all_tracks)
-                if all_tracks
+                "tracks_never_sampled_pct": 100 * never_sampled / len(tracks)
+                if tracks
                 else np.nan,
-                "tracks": len(all_tracks),
+                "tracks": len(tracks),
             }
         )
     return pd.DataFrame(results)
@@ -580,19 +702,19 @@ def make_group_folds(
     seed: int = 42,
 ) -> list[dict[str, Any]]:
     """Build deterministic GroupKFold-style folds with clips as indivisible groups."""
-    clips = sorted(images["clip"].dropna().astype(str).unique())
+    grouped = images.loc[images["clip"].notna()].copy()
+    grouped["clip"] = grouped["clip"].astype(str)
+    clips = sorted(grouped["clip"].unique())
     if len(clips) < n_splits:
         raise ValueError(f"Need at least {n_splits} clips; found {len(clips)}")
-    grouped = images.copy()
-    grouped["clip"] = grouped["clip"].astype(str)
     try:
         from sklearn.model_selection import GroupKFold
 
+        # shuffle/random_state exist only in scikit-learn >= 1.6.
         splitter = GroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-        assignments = splitter.split(grouped, groups=grouped["clip"])
         fold_clips = [
             sorted(grouped.iloc[val_indices]["clip"].unique().tolist())
-            for _, val_indices in assignments
+            for _, val_indices in splitter.split(grouped, groups=grouped["clip"])
         ]
     except (ImportError, TypeError):
         rng = np.random.default_rng(seed)
@@ -605,41 +727,42 @@ def make_group_folds(
             fold = min(range(n_splits), key=lambda index: (fold_sizes[index], index))
             fold_clips[fold].append(clip)
             fold_sizes[fold] += group_sizes[clip]
+        fold_clips = [sorted(clip_list) for clip_list in fold_clips]
+
     target = annotations.copy()
     if "iscrowd" in target:
         target, _ = split_annotations(target)
     target = add_box_dimensions(target, target_only=False)
+    target_clip = target["clip"].astype(str)
+    image_clip = images["clip"].astype(str)
+
+    def class_counts(frame: pd.DataFrame) -> dict[str, int]:
+        return {
+            str(int(key)): int(value)
+            for key, value in frame.groupby("class_id").size().items()
+            if pd.notna(key)
+        }
+
+    def median_sqrt_area(frame: pd.DataFrame) -> float | None:
+        return float(frame["sqrt_area"].median()) if len(frame) else None
+
     folds = []
     for index, validation_clips in enumerate(fold_clips):
-        train_clips = [clip for clip in clips if clip not in validation_clips]
-        val_annotations = target.loc[target["clip"].astype(str).isin(validation_clips)]
+        val_set = set(validation_clips)
+        train_clips = [clip for clip in clips if clip not in val_set]
+        train_annotations = target.loc[target_clip.isin(train_clips)]
+        val_annotations = target.loc[target_clip.isin(val_set)]
         folds.append(
             {
                 "fold": index,
-                "train_clips": sorted(train_clips),
+                "train_clips": train_clips,
                 "val_clips": sorted(validation_clips),
-                "train_frames": int(images["clip"].astype(str).isin(train_clips).sum()),
-                "val_frames": int(images["clip"].astype(str).isin(validation_clips).sum()),
-                "val_class_counts": {
-                    str(int(key)): int(value)
-                    for key, value in val_annotations.groupby("class_id").size().items()
-                    if pd.notna(key)
-                },
-                "train_class_counts": {
-                    str(int(key)): int(value)
-                    for key, value in target.loc[
-                        target["clip"].astype(str).isin(train_clips)
-                    ].groupby("class_id").size().items()
-                    if pd.notna(key)
-                },
-                "val_median_sqrt_area": float(val_annotations["sqrt_area"].median())
-                if len(val_annotations)
-                else None,
-                "train_median_sqrt_area": float(
-                    target.loc[target["clip"].astype(str).isin(train_clips), "sqrt_area"].median()
-                )
-                if target["clip"].astype(str).isin(train_clips).any()
-                else None,
+                "train_frames": int(image_clip.isin(train_clips).sum()),
+                "val_frames": int(image_clip.isin(val_set).sum()),
+                "val_class_counts": class_counts(val_annotations),
+                "train_class_counts": class_counts(train_annotations),
+                "val_median_sqrt_area": median_sqrt_area(val_annotations),
+                "train_median_sqrt_area": median_sqrt_area(train_annotations),
             }
         )
     return folds
@@ -656,6 +779,10 @@ def subsampled_frame_list(images: pd.DataFrame, step: int) -> list[dict[str, Any
     return selected[columns].to_dict("records")
 
 
+# ---------------------------------------------------------------------------
+# I/O and visualization
+# ---------------------------------------------------------------------------
+
 def save_json(data: Any, path: str | Path) -> None:
     """Write JSON after creating its parent directory."""
     output = Path(path)
@@ -668,11 +795,15 @@ def save_json(data: Any, path: str | Path) -> None:
 def _json_safe(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _json_safe(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, (list, tuple, set)):
         return [_json_safe(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return _json_safe(value.tolist())
+    if isinstance(value, pd.DataFrame):
+        return _json_safe(value.to_dict("records"))
     if isinstance(value, np.generic):
         return _json_safe(value.item())
-    if value is pd.NA:
+    if value is pd.NA or value is pd.NaT:
         return None
     if isinstance(value, float) and not math.isfinite(value):
         return None
@@ -697,15 +828,15 @@ def visualize_frame(
         _, ax = plt.subplots(figsize=(12, 8))
     ax.imshow(image)
     colors = plt.get_cmap("tab10")
-    for _, row in target_annotations.iterrows():
-        x, y, width, height = map(float, row["bbox"])
-        class_id = int(row["category_id"]) - 1
+    for bbox, category_id in zip(target_annotations["bbox"], target_annotations["category_id"]):
+        x, y, width, height = map(float, bbox)
+        class_id = int(category_id) - 1
         color = colors(class_id % 10)
         ax.add_patch(Rectangle((x, y), width, height, fill=False, edgecolor=color, linewidth=1.5))
         label = class_names[class_id] if 0 <= class_id < len(class_names) else str(class_id)
         ax.text(x, y, label, color="white", fontsize=7, backgroundcolor=color)
-    for _, row in ignored_annotations.iterrows():
-        x, y, width, height = map(float, row["bbox"])
+    for bbox in ignored_annotations["bbox"]:
+        x, y, width, height = map(float, bbox)
         ax.add_patch(
             Rectangle(
                 (x, y), width, height, facecolor="gray", alpha=0.25,
