@@ -67,6 +67,29 @@ mounted Drive, add, for example,
 `--drive-copy /content/drive/MyDrive/visdrone-subset.zip`. The step is applied independently
 to each clip in frame order; ignored-region labels remain in a separate `ignore/` tree.
 
+### YOLO baseline (Ultralytics)
+
+```bash
+pip install ultralytics
+# train on the subset (or pass /content/data for the full dataset)
+python -m src.yolo_baseline train --data-root /content/visdrone-subset --epochs 30 --imgsz 1280
+# write the Kaggle submission
+python -m src.yolo_baseline predict --weights runs/detect/baseline/weights/best.pt \
+    --test-root /content/data --out submission.csv
+kaggle competitions submit -c multiple-object-video-detection-hw-2-ucu-ai-2026 -f submission.csv -m "yolo11s baseline"
+```
+
+### Faster R-CNN (two-stage, anchor-based)
+
+Uses the same YOLO labels and writes the same submission format. Needs `torch` and `torchvision`
+(preinstalled in Colab).
+
+```bash
+python -m src.faster_rcnn train --data-root /content/visdrone-subset --epochs 12 --batch 4
+python -m src.faster_rcnn predict --weights runs/faster_rcnn/last.pt \
+    --test-root /content/data --out submission_frcnn.csv
+```
+
 ## ⚠️ Rules
 
 You may change **only** `report.md` and the `images/` folder.
