@@ -86,6 +86,8 @@ Uses the same YOLO labels and writes the same submission format. Needs `torch` a
 
 ```bash
 python -m src.faster_rcnn train --data-root /content/visdrone-subset --epochs 12 --batch 4
+# COCO mAP on the labeled val split (--step 5 = every 5th frame, faster)
+python -m src.faster_rcnn evaluate --weights runs/faster_rcnn/last.pt --split-root /content/data/val --step 5
 python -m src.faster_rcnn predict --weights runs/faster_rcnn/last.pt \
     --test-root /content/data --out submission_frcnn.csv
 ```

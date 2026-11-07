@@ -5,6 +5,7 @@ the same Kaggle submission CSV.
 
 Usage (Colab, from the repository root):
     python -m src.faster_rcnn train --data-root /content/visdrone-subset --epochs 12
+    python -m src.faster_rcnn evaluate --weights runs/faster_rcnn/last.pt --split-root /content/data/val
     python -m src.faster_rcnn predict --weights runs/faster_rcnn/last.pt \
         --test-root /content/data --out submission_frcnn.csv
 """
@@ -142,15 +143,77 @@ def train(
     return checkpoint
 
 
-def predict(weights: Path, test_root: Path, out: Path, batch: int) -> Path:
+def load_trained(weights: Path):
+    """Load a checkpoint saved by `train`; returns (model in eval mode, device)."""
     import torch
-    from torchvision.io import ImageReadMode, read_image
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     state = torch.load(weights, map_location=device)
     model = build_model(state["min_size"], state["max_size"], pretrained=False)
     model.load_state_dict(state["model"])
-    model.to(device).eval()
+    return model.to(device).eval(), device
+
+
+def _read_images(paths: Sequence[Path], device):
+    from torchvision.io import ImageReadMode, read_image
+
+    return [read_image(str(p), ImageReadMode.RGB).float().div(255).to(device) for p in paths]
+
+
+def evaluate(weights: Path, split_root: Path, batch: int, step: int) -> dict[str, float]:
+    """COCO mAP on a labeled split (e.g. /content/data/val) using its annotations_coco.json.
+
+    Ignored regions (iscrowd=1) are matched but not counted, as in the COCO protocol.
+    """
+    import torch
+    from pycocotools.coco import COCO
+
+    from src.data_utils import image_path_for
+
+    coco = COCO(str(split_root / "annotations_coco.json"))
+    image_ids = sorted(coco.getImgIds())[::step]
+    model, device = load_trained(weights)
+    results = []
+    with torch.inference_mode():
+        for start in range(0, len(image_ids), batch):
+            chunk = image_ids[start : start + batch]
+            paths = [image_path_for(split_root, coco.imgs[i]["file_name"]) for i in chunk]
+            for image_id, out in zip(chunk, model(_read_images(paths, device))):
+                for (x1, y1, x2, y2), score, label in zip(
+                    out["boxes"].tolist(), out["scores"].tolist(), out["labels"].tolist()
+                ):
+                    # model labels 1..8 are the COCO category ids 1..8 of this dataset
+                    results.append({"image_id": image_id, "category_id": label,
+                                    "bbox": [x1, y1, x2 - x1, y2 - y1], "score": score})
+            print(f"{min(start + batch, len(image_ids))}/{len(image_ids)} images", end="\r")
+    return coco_map(coco, results, image_ids)
+
+
+def coco_map(coco, results: list[dict], image_ids: Sequence[int]) -> dict[str, float]:
+    """Run COCOeval on detection dicts and print overall and per-class AP."""
+    from pycocotools.cocoeval import COCOeval
+
+    if not results:
+        raise RuntimeError("Model produced no detections")
+    evaluator = COCOeval(coco, coco.loadRes(results), "bbox")
+    evaluator.params.imgIds = image_ids
+    evaluator.params.maxDets = [1, 100, MAX_DETECTIONS]
+    evaluator.evaluate()
+    evaluator.accumulate()
+    evaluator.summarize()
+    # per-class AP@[.5:.95]; precision shape: [iou, recall, class, area, maxDets]
+    precision = evaluator.eval["precision"][:, :, :, 0, -1]
+    for index, name in enumerate(CLASS_NAMES):
+        values = precision[:, :, index]
+        values = values[values > -1]
+        print(f"  {name:10s} AP {values.mean() if values.size else float('nan'):.3f}")
+    return {"mAP": float(evaluator.stats[0]), "mAP50": float(evaluator.stats[1])}
+
+
+def predict(weights: Path, test_root: Path, out: Path, batch: int) -> Path:
+    import torch
+
+    model, device = load_trained(weights)
 
     with (test_root / "test_images.csv").open(encoding="utf-8") as file:
         rows = list(csv.DictReader(file))
@@ -160,10 +223,7 @@ def predict(weights: Path, test_root: Path, out: Path, batch: int) -> Path:
         writer.writerow(["image_id", "PredictionString"])
         for start in range(0, len(rows), batch):
             chunk = rows[start : start + batch]
-            images = [
-                read_image(str(test_root / row["file_name"]), ImageReadMode.RGB).float().div(255).to(device)
-                for row in chunk
-            ]
+            images = _read_images([test_root / row["file_name"] for row in chunk], device)
             for row, result in zip(chunk, model(images)):
                 writer.writerow([
                     row["image_id"],
@@ -190,6 +250,14 @@ def main() -> None:
     train_parser.add_argument("--out-dir", type=Path, default=Path("runs/faster_rcnn"))
     train_parser.add_argument("--workers", type=int, default=2)
 
+    eval_parser = commands.add_parser("evaluate", help="COCO mAP on a labeled split")
+    eval_parser.add_argument("--weights", type=Path, required=True)
+    eval_parser.add_argument("--split-root", type=Path, required=True,
+                             help="Folder with annotations_coco.json, e.g. /content/data/val")
+    eval_parser.add_argument("--batch", type=int, default=4)
+    eval_parser.add_argument("--step", type=int, default=1,
+                             help="Evaluate every k-th frame (faster; consecutive frames are near-duplicates)")
+
     predict_parser = commands.add_parser("predict")
     predict_parser.add_argument("--weights", type=Path, required=True)
     predict_parser.add_argument("--test-root", type=Path, required=True,
@@ -201,6 +269,8 @@ def main() -> None:
     if args.command == "train":
         train(args.data_root, args.epochs, args.batch, args.lr, args.min_size, args.max_size,
               args.out_dir, args.workers)
+    elif args.command == "evaluate":
+        evaluate(args.weights, args.split_root, args.batch, args.step)
     else:
         predict(args.weights, args.test_root, args.out, args.batch)
 
