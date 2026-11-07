@@ -103,6 +103,22 @@ python -m src.fcos evaluate --weights runs/fcos/last.pt --split-root /content/da
 python -m src.fcos predict --weights runs/fcos/last.pt     --test-root /content/data --out submission_fcos.csv
 ```
 
+### Our pipeline: tiled YOLO + sliced inference (EDA-driven)
+
+Trains on 640 px tiles cut from full-resolution frames (ignored regions painted gray, rare-class
+tiles repeated) and predicts with overlapping tiles plus one full-image pass. See the module
+docstring in `src/tiled_yolo.py` for which EDA finding drives each choice.
+
+```bash
+pip install ultralytics
+python -m src.tiled_yolo prepare --data-root /content/visdrone-subset --out /content/visdrone-tiles
+python -m src.tiled_yolo train --data-root /content/visdrone-tiles --epochs 20     --project /content/drive/MyDrive/runs/tiled_yolo   # after a disconnect: same command + --resume
+W=/content/drive/MyDrive/runs/tiled_yolo/tiled/weights/best.pt
+python -m src.tiled_yolo evaluate --weights $W --split-root /content/data/val --step 5
+python -m src.tiled_yolo evaluate --weights $W --split-root /content/data/val --step 5 --tile 0  # ablation: no slicing
+python -m src.tiled_yolo predict --weights $W --test-root /content/data --out submission_tiled.csv
+```
+
 ## ⚠️ Rules
 
 You may change **only** `report.md` and the `images/` folder.
