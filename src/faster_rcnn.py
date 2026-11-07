@@ -50,7 +50,6 @@ def build_model(min_size: int, max_size: int, pretrained: bool = True):
 
     model = torchvision.models.detection.fasterrcnn_resnet50_fpn_v2(
         weights="DEFAULT" if pretrained else None,
-        rpn_anchor_generator=AnchorGenerator(ANCHOR_SIZES, ASPECT_RATIOS),
         min_size=min_size,
         max_size=max_size,
         # dense scenes: keep more proposals and detections than the COCO defaults
@@ -60,6 +59,9 @@ def build_model(min_size: int, max_size: int, pretrained: bool = True):
         box_detections_per_img=MAX_DETECTIONS,
         box_score_thresh=0.01,  # low threshold: mAP rewards recall
     )
+    # the v2 builder hard-codes its anchor generator, so swap ours in afterwards;
+    # same 3 anchors per location, so the pretrained RPN head still fits
+    model.rpn.anchor_generator = AnchorGenerator(ANCHOR_SIZES, ASPECT_RATIOS)
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, len(CLASS_NAMES) + 1)
     return model
