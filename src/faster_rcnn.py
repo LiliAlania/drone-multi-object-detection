@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import time
 from pathlib import Path
 from typing import Sequence
 
@@ -176,11 +177,22 @@ def evaluate(weights: Path, split_root: Path, batch: int, step: int) -> dict[str
     image_ids = sorted(coco.getImgIds())[::step]
     model, device = load_trained(weights)
     results = []
+    model_seconds = 0.0
     with torch.inference_mode():
         for start in range(0, len(image_ids), batch):
             chunk = image_ids[start : start + batch]
             paths = [image_path_for(split_root, coco.imgs[i]["file_name"]) for i in chunk]
-            for image_id, out in zip(chunk, model(_read_images(paths, device))):
+            images = _read_images(paths, device)
+            # time only the model (incl. resize + NMS), not disk reads; skip first batch (warm-up)
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            tick = time.perf_counter()
+            outputs = model(images)
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            if start:
+                model_seconds += time.perf_counter() - tick
+            for image_id, out in zip(chunk, outputs):
                 for (x1, y1, x2, y2), score, label in zip(
                     out["boxes"].tolist(), out["scores"].tolist(), out["labels"].tolist()
                 ):
@@ -188,7 +200,13 @@ def evaluate(weights: Path, split_root: Path, batch: int, step: int) -> dict[str
                     results.append({"image_id": image_id, "category_id": label,
                                     "bbox": [x1, y1, x2 - x1, y2 - y1], "score": score})
             print(f"{min(start + batch, len(image_ids))}/{len(image_ids)} images", end="\r")
-    return coco_map(coco, results, image_ids)
+    metrics = coco_map(coco, results, image_ids)
+    timed_images = len(image_ids) - min(batch, len(image_ids))
+    if timed_images:
+        metrics["ms_per_image"] = 1000 * model_seconds / timed_images
+        print(f"Inference: {metrics['ms_per_image']:.1f} ms/image "
+              f"({1000 / metrics['ms_per_image']:.1f} FPS, batch {batch}, {device.type})")
+    return metrics
 
 
 def coco_map(coco, results: list[dict], image_ids: Sequence[int]) -> dict[str, float]:
@@ -203,13 +221,24 @@ def coco_map(coco, results: list[dict], image_ids: Sequence[int]) -> dict[str, f
     evaluator.evaluate()
     evaluator.accumulate()
     evaluator.summarize()
-    # per-class AP@[.5:.95]; precision shape: [iou, recall, class, area, maxDets]
-    precision = evaluator.eval["precision"][:, :, :, 0, -1]
-    for index, name in enumerate(CLASS_NAMES):
-        values = precision[:, :, index]
+    # pycocotools' first summary line is fixed at maxDets=100; recompute at 500 (the Kaggle cap).
+    # precision shape: [iou, recall, class, area(all, small, medium, large), maxDets]
+    precision = evaluator.eval["precision"][..., -1]
+
+    def ap(values) -> float:
         values = values[values > -1]
-        print(f"  {name:10s} AP {values.mean() if values.size else float('nan'):.3f}")
-    return {"mAP": float(evaluator.stats[0]), "mAP50": float(evaluator.stats[1])}
+        return float(values.mean()) if values.size else float("nan")
+
+    metrics = {
+        "mAP": ap(precision[:, :, :, 0]),
+        "AP50": ap(precision[0, :, :, 0]),
+        "AP_small": ap(precision[:, :, :, 1]),
+    }
+    print(f"mAP@[.5:.95] {metrics['mAP']:.4f} | AP50 {metrics['AP50']:.4f} | "
+          f"AP_small {metrics['AP_small']:.4f}  (maxDets={MAX_DETECTIONS})")
+    for index, name in enumerate(CLASS_NAMES):
+        print(f"  {name:10s} AP {ap(precision[:, :, index, 0]):.3f}")
+    return metrics
 
 
 def predict(weights: Path, test_root: Path, out: Path, batch: int) -> Path:
