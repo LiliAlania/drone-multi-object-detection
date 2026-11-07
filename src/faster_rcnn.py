@@ -101,7 +101,7 @@ def _collate(batch):
 
 def train(
     data_root: Path, epochs: int, batch: int, lr: float, min_size: int, max_size: int,
-    out_dir: Path, workers: int,
+    out_dir: Path, workers: int, resume: bool = False,
 ) -> Path:
     import torch
     from torch.utils.data import DataLoader
@@ -122,8 +122,25 @@ def train(
     scaler = torch.amp.GradScaler(enabled=device.type == "cuda")
     out_dir.mkdir(parents=True, exist_ok=True)
     checkpoint = out_dir / "last.pt"
+    start_epoch = 0
+    if resume:
+        if not checkpoint.is_file():
+            raise FileNotFoundError(f"--resume given but no checkpoint at {checkpoint}")
+        # weights_only=False: the scheduler state holds a Counter; these are our own files
+        state = torch.load(checkpoint, map_location=device, weights_only=False)
+        saved = (state["min_size"], state["max_size"], state.get("epochs"))
+        if saved != (min_size, max_size, epochs):
+            # the LR schedule is tied to --epochs, so a different value would silently break it
+            raise ValueError(f"Checkpoint was started with min/max size {saved[0]}/{saved[1]} and "
+                             f"--epochs {saved[2]}; pass the same values to resume")
+        model.load_state_dict(state["model"])
+        optimizer.load_state_dict(state["optimizer"])
+        scheduler.load_state_dict(state["scheduler"])
+        scaler.load_state_dict(state["scaler"])
+        start_epoch = state["epoch"]
+        print(f"Resuming after epoch {start_epoch} from {checkpoint}")
 
-    for epoch in range(epochs):
+    for epoch in range(start_epoch, epochs):
         model.train()
         running = 0.0
         for step, (images, targets) in enumerate(loader, 1):
@@ -141,7 +158,14 @@ def train(
             if step % 50 == 0:
                 print(f"epoch {epoch + 1}/{epochs} step {step}/{len(loader)} loss {running / step:.4f}")
         scheduler.step()
-        torch.save({"model": model.state_dict(), "min_size": min_size, "max_size": max_size}, checkpoint)
+        state = {
+            "model": model.state_dict(), "min_size": min_size, "max_size": max_size,
+            "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(),
+            "scaler": scaler.state_dict(), "epoch": epoch + 1, "epochs": epochs,
+        }
+        # write then rename, so a disconnect during saving can't corrupt last.pt
+        torch.save(state, checkpoint.with_suffix(".tmp"))
+        checkpoint.with_suffix(".tmp").replace(checkpoint)
         print(f"epoch {epoch + 1} done, mean loss {running / max(len(loader), 1):.4f}, saved {checkpoint}")
     return checkpoint
 
@@ -151,7 +175,7 @@ def load_trained(weights: Path):
     import torch
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    state = torch.load(weights, map_location=device)
+    state = torch.load(weights, map_location=device, weights_only=False)  # own checkpoint; holds scheduler state
     model = build_model(state["min_size"], state["max_size"], pretrained=False)
     model.load_state_dict(state["model"])
     return model.to(device).eval(), device
@@ -280,6 +304,8 @@ def main() -> None:
     train_parser.add_argument("--max-size", type=int, default=1920)
     train_parser.add_argument("--out-dir", type=Path, default=Path("runs/faster_rcnn"))
     train_parser.add_argument("--workers", type=int, default=2)
+    train_parser.add_argument("--resume", action="store_true",
+                              help="Continue from <out-dir>/last.pt (same --epochs and sizes)")
 
     eval_parser = commands.add_parser("evaluate", help="COCO mAP on a labeled split")
     eval_parser.add_argument("--weights", type=Path, required=True)
@@ -299,7 +325,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "train":
         train(args.data_root, args.epochs, args.batch, args.lr, args.min_size, args.max_size,
-              args.out_dir, args.workers)
+              args.out_dir, args.workers, args.resume)
     elif args.command == "evaluate":
         evaluate(args.weights, args.split_root, args.batch, args.step)
     else:
