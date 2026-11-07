@@ -101,7 +101,7 @@ def _collate(batch):
 
 def train(
     data_root: Path, epochs: int, batch: int, lr: float, min_size: int, max_size: int,
-    out_dir: Path, workers: int, resume: bool = False,
+    out_dir: Path, workers: int, resume: bool = False, build_fn=build_model,
 ) -> Path:
     import torch
     from torch.utils.data import DataLoader
@@ -112,7 +112,7 @@ def train(
         YoloDetectionDataset(train_dir, train=True), batch_size=batch, shuffle=True,
         num_workers=workers, collate_fn=_collate,
     )
-    model = build_model(min_size, max_size).to(device)
+    model = build_fn(min_size, max_size).to(device)
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(params, lr=lr, momentum=0.9, weight_decay=1e-4)
     # step decay at 2/3 and 8/9 of training (the "1x schedule" shape)
@@ -170,13 +170,13 @@ def train(
     return checkpoint
 
 
-def load_trained(weights: Path):
+def load_trained(weights: Path, build_fn=build_model):
     """Load a checkpoint saved by `train`; returns (model in eval mode, device)."""
     import torch
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     state = torch.load(weights, map_location=device, weights_only=False)  # own checkpoint; holds scheduler state
-    model = build_model(state["min_size"], state["max_size"], pretrained=False)
+    model = build_fn(state["min_size"], state["max_size"], pretrained=False)
     model.load_state_dict(state["model"])
     return model.to(device).eval(), device
 
@@ -187,7 +187,7 @@ def _read_images(paths: Sequence[Path], device):
     return [read_image(str(p), ImageReadMode.RGB).float().div(255).to(device) for p in paths]
 
 
-def evaluate(weights: Path, split_root: Path, batch: int, step: int) -> dict[str, float]:
+def evaluate(weights: Path, split_root: Path, batch: int, step: int, build_fn=build_model) -> dict[str, float]:
     """COCO mAP on a labeled split (e.g. /content/data/val) using its annotations_coco.json.
 
     Ignored regions (iscrowd=1) are matched but not counted, as in the COCO protocol.
@@ -199,7 +199,7 @@ def evaluate(weights: Path, split_root: Path, batch: int, step: int) -> dict[str
 
     coco = COCO(str(split_root / "annotations_coco.json"))
     image_ids = sorted(coco.getImgIds())[::step]
-    model, device = load_trained(weights)
+    model, device = load_trained(weights, build_fn)
     results = []
     model_seconds = 0.0
     with torch.inference_mode():
@@ -265,10 +265,10 @@ def coco_map(coco, results: list[dict], image_ids: Sequence[int]) -> dict[str, f
     return metrics
 
 
-def predict(weights: Path, test_root: Path, out: Path, batch: int) -> Path:
+def predict(weights: Path, test_root: Path, out: Path, batch: int, build_fn=build_model) -> Path:
     import torch
 
-    model, device = load_trained(weights)
+    model, device = load_trained(weights, build_fn)
 
     with (test_root / "test_images.csv").open(encoding="utf-8") as file:
         rows = list(csv.DictReader(file))
@@ -290,19 +290,21 @@ def predict(weights: Path, test_root: Path, out: Path, batch: int) -> Path:
     return out
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+def main(build_fn=build_model, run_name: str = "faster_rcnn", submission: str = "submission_frcnn.csv",
+         lr: float = 0.01, description: str = __doc__) -> None:
+    """CLI shared with other torchvision detectors (src.fcos): only the model builder differs."""
+    parser = argparse.ArgumentParser(description=description, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
 
     train_parser = commands.add_parser("train")
     train_parser.add_argument("--data-root", type=Path, required=True)
     train_parser.add_argument("--epochs", type=int, default=12)
     train_parser.add_argument("--batch", type=int, default=4)
-    train_parser.add_argument("--lr", type=float, default=0.01)
+    train_parser.add_argument("--lr", type=float, default=lr)
     # native-ish resolution: downscaling kills the 10-30 px objects
     train_parser.add_argument("--min-size", type=int, default=1080)
     train_parser.add_argument("--max-size", type=int, default=1920)
-    train_parser.add_argument("--out-dir", type=Path, default=Path("runs/faster_rcnn"))
+    train_parser.add_argument("--out-dir", type=Path, default=Path("runs") / run_name)
     train_parser.add_argument("--workers", type=int, default=2)
     train_parser.add_argument("--resume", action="store_true",
                               help="Continue from <out-dir>/last.pt (same --epochs and sizes)")
@@ -319,17 +321,17 @@ def main() -> None:
     predict_parser.add_argument("--weights", type=Path, required=True)
     predict_parser.add_argument("--test-root", type=Path, required=True,
                                 help="Folder containing test_images.csv and test/images/")
-    predict_parser.add_argument("--out", type=Path, default=Path("submission_frcnn.csv"))
+    predict_parser.add_argument("--out", type=Path, default=Path(submission))
     predict_parser.add_argument("--batch", type=int, default=4)
 
     args = parser.parse_args()
     if args.command == "train":
         train(args.data_root, args.epochs, args.batch, args.lr, args.min_size, args.max_size,
-              args.out_dir, args.workers, args.resume)
+              args.out_dir, args.workers, args.resume, build_fn)
     elif args.command == "evaluate":
-        evaluate(args.weights, args.split_root, args.batch, args.step)
+        evaluate(args.weights, args.split_root, args.batch, args.step, build_fn)
     else:
-        predict(args.weights, args.test_root, args.out, args.batch)
+        predict(args.weights, args.test_root, args.out, args.batch, build_fn)
 
 
 if __name__ == "__main__":

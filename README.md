@@ -93,6 +93,16 @@ python -m src.faster_rcnn predict --weights runs/faster_rcnn/last.pt \
     --test-root /content/data --out submission_frcnn.csv
 ```
 
+### FCOS (one-stage, anchor-free)
+
+Same data, CLI, checkpoint format and submission as Faster R-CNN; only the model differs.
+
+```bash
+python -m src.fcos train --data-root /content/visdrone-subset --epochs 12 --batch 4
+python -m src.fcos evaluate --weights runs/fcos/last.pt --split-root /content/data/val --step 5
+python -m src.fcos predict --weights runs/fcos/last.pt     --test-root /content/data --out submission_fcos.csv
+```
+
 ## ⚠️ Rules
 
 You may change **only** `report.md` and the `images/` folder.
