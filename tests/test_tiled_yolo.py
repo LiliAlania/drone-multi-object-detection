@@ -1,6 +1,7 @@
+import importlib.util
 import unittest
 
-from src.tiled_yolo import crop_targets, repeat_factors, tile_windows, yolo_to_xyxy
+from src.tiled_yolo import ARCHS, crop_targets, repeat_factors, tile_windows, yolo_to_xyxy
 
 
 class TiledYoloTests(unittest.TestCase):
@@ -35,6 +36,13 @@ class TiledYoloTests(unittest.TestCase):
         self.assertAlmostEqual(factors[-1], 2 ** 0.5)  # class 5 in 5% of tiles: sqrt(0.1 / 0.05)
         self.assertEqual(repeat_factors([set(), {1}], 0.1), [1.0, 1.0])
 
+
+    @unittest.skipUnless(importlib.util.find_spec("ultralytics"), "ultralytics not installed")
+    def test_every_arch_is_an_ultralytics_class(self):
+        import ultralytics
+
+        for class_name in ARCHS.values():
+            self.assertTrue(hasattr(ultralytics, class_name), class_name)
 
 
 if __name__ == "__main__":

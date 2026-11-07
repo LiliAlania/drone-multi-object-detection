@@ -119,6 +119,18 @@ python -m src.tiled_yolo evaluate --weights $W --split-root /content/data/val --
 python -m src.tiled_yolo predict --weights $W --test-root /content/data --out submission_tiled.csv
 ```
 
+### RT-DETR (query-based, transformer)
+
+Same tiles, sliced inference and COCO evaluation as the tiled YOLO pipeline; only the model differs.
+Run `src.tiled_yolo prepare` first (the tiles are shared).
+
+```bash
+python -m src.rtdetr train --data-root /content/visdrone-tiles --epochs 20     --project /content/drive/MyDrive/runs/rtdetr   # after a disconnect: same command + --resume
+W=/content/drive/MyDrive/runs/rtdetr/rtdetr/weights/best.pt
+python -m src.rtdetr evaluate --weights $W --split-root /content/data/val --step 5
+python -m src.rtdetr predict --weights $W --test-root /content/data --out submission_rtdetr.csv
+```
+
 ## ⚠️ Rules
 
 You may change **only** `report.md` and the `images/` folder.
