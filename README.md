@@ -215,6 +215,13 @@ as the fast case; keep the laptop plugged in. A T4 on Colab is in the same range
 So about a day of GPU time; train YOLO and Faster R-CNN in separate sessions (on Colab each needs
 a new session after ~12 h, so use `--resume`). For a quicker first result, set `yolo.epochs: 30`.
 
+**On Kaggle:** [`notebooks/03_ensemble_kaggle.ipynb`](notebooks/03_ensemble_kaggle.ipynb) (GPU T4 x2,
+Internet on, competition data as input). It clones this repository, so push first. Set `STAGE` and use
+*Save & Run All*: `"smoke"` (debug run, ~20 min), then `"train"` (both models in parallel, one per T4,
+stopped after `TRAIN_HOURS`; attach the previous version's output to resume, repeat until both are
+`done`), then `"infer"` (SAHI, WBF, `/kaggle/working/submission.csv`). The `kaggle` env in the config
+is picked automatically; the notebook points `PIPELINE_DATA_ROOT` at the competition input.
+
 ## ⚠️ Rules
 
 You may change **only** `report.md` and the `images/` folder.
