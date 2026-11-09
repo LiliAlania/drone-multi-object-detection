@@ -2,8 +2,9 @@
 
 EDA finding -> what this pipeline does
 - Objects are tiny: at imgsz 640, 69% of boxes have a side < 16 px (22% even at 1280).
-  -> train on 640x640 tiles cut from full-resolution frames (no downscaling) and predict on
-     overlapping tiles + one full-image pass (large objects, low-res test frames), merged with NMS.
+  -> train on 640x640 tiles cut from full-resolution frames (no downscaling) and predict on the
+     whole frame at its native resolution, i.e. the same object scale as in training. Optional:
+     extra overlapping tile passes (--tile 640), merged with NMS.
 - 72% of frames contain ignored regions with unlabeled objects inside.
   -> paint ignored regions gray in training tiles so the model is not taught they are background.
 - Strong class imbalance (car 505k vs bus 9.7k boxes).
@@ -166,10 +167,26 @@ def train(data_root: Path, model: str, epochs: int, batch: int, project: Path, n
     return best
 
 
-def sliced_predict(yolo, path: Path, tile: int, overlap: float, full_imgsz: int, conf: float):
-    """Full-image pass + tile passes at native resolution, merged with class-wise NMS.
+def native_imgsz(width: int, height: int, stride: int = 32) -> int:
+    """Inference size that keeps the frame at its own resolution (the scale the model was trained on)."""
+    return math.ceil(max(width, height) / stride) * stride
 
-    Returns (xyxy boxes, scores, 0-based classes) as lists, at most MAX_DETECTIONS.
+
+def off_inner_edges(box: Sequence[float], window: Sequence[int], width: int, height: int, margin: float = 2) -> bool:
+    """False if a tile box touches a tile border that is not an image border (the object is cut there).
+
+    With 20% overlap such an object (< 128 px) lies fully inside a neighbouring tile, or in the full pass.
+    """
+    x0, y0, x1, y1 = window
+    bx1, by1, bx2, by2 = box  # tile coordinates
+    return not ((x0 > 0 and bx1 <= margin) or (y0 > 0 and by1 <= margin)
+                or (x1 < width and bx2 >= x1 - x0 - margin) or (y1 < height and by2 >= y1 - y0 - margin))
+
+
+def sliced_predict(yolo, path: Path, tile: int, overlap: float, full_imgsz: int, conf: float):
+    """Full-image pass (+ optional tile passes), merged with class-wise NMS.
+
+    full_imgsz 0 = native resolution. Returns (xyxy boxes, scores, 0-based classes), at most MAX_DETECTIONS.
     """
     import cv2
     import torch
@@ -177,16 +194,19 @@ def sliced_predict(yolo, path: Path, tile: int, overlap: float, full_imgsz: int,
 
     image = cv2.imread(str(path))
     height, width = image.shape[:2]
+    full = yolo.predict(image, imgsz=full_imgsz or native_imgsz(width, height), conf=conf,
+                        max_det=MAX_DETECTIONS, verbose=False)[0].boxes
+    boxes, scores, classes = [full.xyxy.cpu()], [full.conf.cpu()], [full.cls.cpu()]
     windows = tile_windows(width, height, tile, overlap) if tile and max(width, height) > tile else []
-    passes = [((0, 0), yolo.predict(image, imgsz=full_imgsz, conf=conf, max_det=MAX_DETECTIONS, verbose=False)[0])]
     if windows:
         crops = [image[y0:y1, x0:x1] for x0, y0, x1, y1 in windows]
-        results = yolo.predict(crops, imgsz=tile, conf=conf, max_det=MAX_DETECTIONS, verbose=False)
-        passes += [((x0, y0), r) for (x0, y0, _, _), r in zip(windows, results)]
-    boxes = torch.cat([r.boxes.xyxy.cpu() + torch.tensor([dx, dy, dx, dy]) for (dx, dy), r in passes])
-    scores = torch.cat([r.boxes.conf.cpu() for _, r in passes])
-    classes = torch.cat([r.boxes.cls.cpu() for _, r in passes])
-    # shortcut: plain NMS keeps a cut-off partial box if it overlaps the full box < 0.6 IoU; WBF would merge them
+        for window, result in zip(windows, yolo.predict(crops, imgsz=tile, conf=conf, max_det=MAX_DETECTIONS, verbose=False)):
+            r = result.boxes.cpu()
+            keep = torch.tensor([off_inner_edges(b, window, width, height) for b in r.xyxy.tolist()], dtype=torch.bool)
+            boxes.append(r.xyxy[keep] + torch.tensor([window[0], window[1]] * 2, dtype=r.xyxy.dtype))
+            scores.append(r.conf[keep])
+            classes.append(r.cls[keep])
+    boxes, scores, classes = torch.cat(boxes), torch.cat(scores), torch.cat(classes)
     keep = batched_nms(boxes, scores, classes.long(), 0.6)[:MAX_DETECTIONS]
     return boxes[keep].tolist(), scores[keep].tolist(), classes[keep].long().tolist()
 
@@ -214,7 +234,7 @@ def evaluate(weights: Path, split_root: Path, step: int, tile: int, full_imgsz: 
     metrics = coco_map(coco, results, image_ids)
     if len(image_ids) > 1:
         metrics["ms_per_image"] = 1000 * seconds / (len(image_ids) - 1)  # includes disk read
-        print(f"Inference: {metrics['ms_per_image']:.1f} ms/image (tile {tile or 'off'}, full {full_imgsz})")
+        print(f"Inference: {metrics['ms_per_image']:.1f} ms/image (tile {tile or 'off'}, full {full_imgsz or 'native'})")
     return metrics
 
 
@@ -262,8 +282,8 @@ def main(arch: str = "yolo", model: str = "yolo11s.pt", name: str = "tiled", bat
     for command in ("evaluate", "predict"):
         sub = commands.add_parser(command)
         sub.add_argument("--weights", type=Path, required=True)
-        sub.add_argument("--tile", type=int, default=TILE, help="0 = full-image pass only (ablation)")
-        sub.add_argument("--full-imgsz", type=int, default=1280)
+        sub.add_argument("--tile", type=int, default=0, help="Also predict on tiles of this size (0 = off)")
+        sub.add_argument("--full-imgsz", type=int, default=0, help="Full-image pass size (0 = native resolution)")
         sub.add_argument("--conf", type=float, default=0.01)  # low: mAP rewards recall
     commands.choices["evaluate"].add_argument("--split-root", type=Path, required=True,
                                               help="Folder with annotations_coco.json, e.g. /content/data/val")

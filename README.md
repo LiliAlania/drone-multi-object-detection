@@ -120,32 +120,36 @@ Same data, CLI, checkpoint format and submission as Faster R-CNN; only the model
 ```bash
 python -m src.fcos train --data-root /content/visdrone-subset --epochs 12 --batch 4
 python -m src.fcos evaluate --weights runs/fcos/last.pt --split-root /content/data/val --step 5
-python -m src.fcos predict --weights runs/fcos/last.pt     --test-root /content/data --out submission_fcos.csv
+python -m src.fcos predict --weights runs/fcos/last.pt \
+    --test-root /content/data --out submission_fcos.csv
 ```
 
 ### Our pipeline: tiled YOLO + sliced inference (EDA-driven)
 
 Trains on 640 px tiles cut from full-resolution frames (ignored regions painted gray, rare-class
-tiles repeated) and predicts with overlapping tiles plus one full-image pass. See the module
+tiles repeated) and predicts on the whole frame at native resolution (same object scale as
+training); `--tile 640` adds overlapping tile passes. See the module
 docstring in `src/tiled_yolo.py` for which EDA finding drives each choice.
 
 ```bash
 pip install ultralytics
 python -m src.tiled_yolo prepare --data-root /content/visdrone-subset --out /content/visdrone-tiles
-python -m src.tiled_yolo train --data-root /content/visdrone-tiles --epochs 20     --project /content/drive/MyDrive/runs/tiled_yolo   # after a disconnect: same command + --resume
+python -m src.tiled_yolo train --data-root /content/visdrone-tiles --epochs 20 \
+    --project /content/drive/MyDrive/runs/tiled_yolo   # after a disconnect: same command + --resume
 W=/content/drive/MyDrive/runs/tiled_yolo/tiled/weights/best.pt
 python -m src.tiled_yolo evaluate --weights $W --split-root /content/data/val --step 5
-python -m src.tiled_yolo evaluate --weights $W --split-root /content/data/val --step 5 --tile 0  # ablation: no slicing
+python -m src.tiled_yolo evaluate --weights $W --split-root /content/data/val --step 5 --tile 640  # ablation: + tile passes
 python -m src.tiled_yolo predict --weights $W --test-root /content/data --out submission_tiled.csv
 ```
 
 ### RT-DETR (query-based, transformer)
 
-Same tiles, sliced inference and COCO evaluation as the tiled YOLO pipeline; only the model differs.
+Same tiles, inference and COCO evaluation as the tiled YOLO pipeline; only the model differs.
 Run `src.tiled_yolo prepare` first (the tiles are shared).
 
 ```bash
-python -m src.rtdetr train --data-root /content/visdrone-tiles --epochs 20     --project /content/drive/MyDrive/runs/rtdetr   # after a disconnect: same command + --resume
+python -m src.rtdetr train --data-root /content/visdrone-tiles --epochs 20 \
+    --project /content/drive/MyDrive/runs/rtdetr   # after a disconnect: same command + --resume
 W=/content/drive/MyDrive/runs/rtdetr/rtdetr/weights/best.pt
 python -m src.rtdetr evaluate --weights $W --split-root /content/data/val --step 5
 python -m src.rtdetr predict --weights $W --test-root /content/data --out submission_rtdetr.csv

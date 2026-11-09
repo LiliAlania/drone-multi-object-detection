@@ -4,9 +4,9 @@ A transformer decoder turns a fixed set of object queries into boxes; Hungarian 
 assigns one query per object in training, so there are no anchors and no NMS inside the model.
 EDA: at most 180 objects per frame (and fewer per 640 px tile), so RT-DETR's 300 queries suffice.
 
-Trains on the same tiles and uses the same sliced inference and COCO evaluation as our
-tiled YOLO pipeline (src.tiled_yolo), so the comparison isolates the detector itself.
-NMS is still used to merge boxes across tiles, not inside the model.
+Trains on the same tiles and uses the same inference and COCO evaluation as our tiled YOLO
+pipeline (src.tiled_yolo), so the comparison isolates the detector itself. NMS is only used to
+merge boxes across optional tile passes (--tile), not inside the model.
 
 Usage (Colab, from the repository root):
     python -m src.tiled_yolo prepare --data-root /content/visdrone-subset --out /content/visdrone-tiles

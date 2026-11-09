@@ -1,10 +1,24 @@
 import importlib.util
 import unittest
 
-from src.tiled_yolo import ARCHS, crop_targets, repeat_factors, tile_windows, yolo_to_xyxy
+from src.tiled_yolo import (
+    ARCHS, crop_targets, native_imgsz, off_inner_edges, repeat_factors, tile_windows, yolo_to_xyxy,
+)
 
 
 class TiledYoloTests(unittest.TestCase):
+    def test_native_imgsz_rounds_up_to_stride(self):
+        self.assertEqual(native_imgsz(1920, 1080), 1920)
+        self.assertEqual(native_imgsz(1904, 1071), 1920)
+        self.assertEqual(native_imgsz(680, 382), 704)
+
+    def test_boxes_cut_by_inner_tile_edges_are_dropped(self):
+        window = (512, 0, 1152, 640)  # middle tile of a 1920x640 image: left/right edges are inner
+        self.assertTrue(off_inner_edges([100, 100, 140, 150], window, 1920, 640))
+        self.assertFalse(off_inner_edges([0, 100, 30, 150], window, 1920, 640))     # cut at left
+        self.assertFalse(off_inner_edges([610, 100, 640, 150], window, 1920, 640))  # cut at right
+        self.assertTrue(off_inner_edges([100, 0, 140, 30], window, 1920, 640))      # top is the image edge
+
     def test_windows_cover_image_and_align_to_edges(self):
         windows = tile_windows(1920, 1080, 640, 0.2)
         self.assertEqual(len(windows), 8)  # x starts 0,512,1024,1280; y starts 0,440
