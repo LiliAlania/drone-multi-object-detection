@@ -93,6 +93,26 @@ python -m src.faster_rcnn predict --weights runs/faster_rcnn/last.pt \
     --test-root /content/data --out submission_frcnn.csv
 ```
 
+Two-stage training options (defaults in brackets). They are saved in the checkpoint, so
+`evaluate`/`predict` rebuild the same model:
+
+| Option | Stage | What it controls |
+|---|---|---|
+| `--rpn-proposals` [2000] | RPN | proposals kept after NMS and sent to the RoI head (pre-NMS: 2x in train, 1x in test) |
+| `--roi-batch` [512] | RoI head | RoIs sampled per image for the second-stage loss |
+| `--roi-pos-fraction` [0.25] | RoI head | foreground share of those sampled RoIs |
+| `--box-loss` [`smooth_l1`] | RoI head | box regression loss: `smooth_l1` or `giou` |
+| `--lr-schedule` [`step`] | training | `step` (x0.1 at 2/3 and 8/9 of epochs) or `cosine` |
+
+Example ablation, one change from the default per run (separate `--out-dir` each):
+
+```bash
+python -m src.faster_rcnn train --data-root /content/visdrone-subset --rpn-proposals 500 --out-dir runs/frcnn_rpn500
+python -m src.faster_rcnn train --data-root /content/visdrone-subset --roi-pos-fraction 0.5 --out-dir runs/frcnn_pos05
+python -m src.faster_rcnn train --data-root /content/visdrone-subset --box-loss giou --out-dir runs/frcnn_giou
+python -m src.faster_rcnn train --data-root /content/visdrone-subset --lr-schedule cosine --out-dir runs/frcnn_cosine
+```
+
 ### FCOS (one-stage, anchor-free)
 
 Same data, CLI, checkpoint format and submission as Faster R-CNN; only the model differs.

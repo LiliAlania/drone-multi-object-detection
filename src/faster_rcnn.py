@@ -27,6 +27,7 @@ IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 ANCHOR_SIZES = ((8,), (16,), (32,), (64,), (128,))
 ASPECT_RATIOS = ((0.5, 1.0, 2.0),) * len(ANCHOR_SIZES)
 MIN_BOX_SIDE = 1.0  # torchvision rejects boxes with zero width/height
+TWO_STAGE_OPTIONS = ("rpn_proposals", "roi_batch", "roi_pos_fraction", "box_loss")  # build_model kwargs
 
 
 def yolo_rows_to_target(
@@ -44,22 +45,60 @@ def yolo_rows_to_target(
     return boxes, labels
 
 
-def build_model(min_size: int, max_size: int, pretrained: bool = True):
+GIOU_LOSS_WEIGHT = 10.0  # MMDetection's faster-rcnn GIoU config; GIoU (<=2) is much smaller than smooth L1 on deltas
+
+
+def _giou_fastrcnn_loss(class_logits, box_regression, labels, regression_targets):
+    """torchvision's fastrcnn_loss with a GIoU box term instead of smooth L1."""
+    import torch
+    import torch.nn.functional as F
+    from torchvision.models.detection._utils import BoxCoder
+    from torchvision.ops import generalized_box_iou_loss
+
+    labels = torch.cat(labels)
+    regression_targets = torch.cat(regression_targets)
+    classification_loss = F.cross_entropy(class_logits, labels)
+    positive = torch.where(labels > 0)[0]
+    deltas = box_regression.reshape(labels.numel(), -1, 4)[positive, labels[positive]]
+    # IoU is invariant to per-axis scaling and shifting, so decoding both against a unit box
+    # gives the same GIoU as decoding against the real proposals
+    coder = BoxCoder((10.0, 10.0, 5.0, 5.0))  # RoIHeads' default weights
+    unit = deltas.new_tensor([[0.0, 0.0, 1.0, 1.0]]).float().expand(len(positive), 4)
+    pred = coder.decode_single(deltas.float(), unit)
+    target = coder.decode_single(regression_targets[positive].float(), unit)
+    box_loss = GIOU_LOSS_WEIGHT * generalized_box_iou_loss(pred, target, reduction="sum") / labels.numel()
+    return classification_loss, box_loss
+
+
+def build_model(
+    min_size: int, max_size: int, pretrained: bool = True, rpn_proposals: int = 2000,
+    roi_batch: int = 512, roi_pos_fraction: float = 0.25, box_loss: str = "smooth_l1",
+):
     import torchvision
+    from torchvision.models.detection import roi_heads
     from torchvision.models.detection.anchor_utils import AnchorGenerator
     from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 
+    if not 0 < roi_pos_fraction <= 1:
+        raise ValueError(f"roi_pos_fraction must be in (0, 1], got {roi_pos_fraction}")
     model = torchvision.models.detection.fasterrcnn_resnet50_fpn_v2(
         weights="DEFAULT" if pretrained else None,
         min_size=min_size,
         max_size=max_size,
-        # dense scenes: keep more proposals and detections than the COCO defaults
-        rpn_pre_nms_top_n_train=4000, rpn_post_nms_top_n_train=2000,
-        rpn_pre_nms_top_n_test=2000, rpn_post_nms_top_n_test=2000,
-        box_batch_size_per_image=512,
+        # dense scenes: keep more proposals and detections than the COCO defaults (1000)
+        rpn_pre_nms_top_n_train=2 * rpn_proposals, rpn_post_nms_top_n_train=rpn_proposals,
+        rpn_pre_nms_top_n_test=rpn_proposals, rpn_post_nms_top_n_test=rpn_proposals,
+        box_batch_size_per_image=roi_batch,  # RoIs sampled per image for the second-stage loss
+        box_positive_fraction=roi_pos_fraction,  # share of those RoIs that are foreground
         box_detections_per_img=MAX_DETECTIONS,
         box_score_thresh=0.01,  # low threshold: mAP rewards recall
     )
+    # shortcut: RoIHeads calls the module-level fastrcnn_loss, so this swap is process-wide;
+    # fine for one model per run, subclass RoIHeads if two models must train side by side
+    if not hasattr(roi_heads, "_smooth_l1_fastrcnn_loss"):
+        roi_heads._smooth_l1_fastrcnn_loss = roi_heads.fastrcnn_loss
+    roi_heads.fastrcnn_loss = {"smooth_l1": roi_heads._smooth_l1_fastrcnn_loss,
+                               "giou": _giou_fastrcnn_loss}[box_loss]
     # the v2 builder hard-codes its anchor generator, so swap ours in afterwards;
     # same 3 anchors per location, so the pretrained RPN head still fits
     model.rpn.anchor_generator = AnchorGenerator(ANCHOR_SIZES, ASPECT_RATIOS)
@@ -102,6 +141,7 @@ def _collate(batch):
 def train(
     data_root: Path, epochs: int, batch: int, lr: float, min_size: int, max_size: int,
     out_dir: Path, workers: int, resume: bool = False, build_fn=build_model,
+    lr_schedule: str = "step", model_cfg: dict | None = None,
 ) -> Path:
     import torch
     from torch.utils.data import DataLoader
@@ -112,13 +152,17 @@ def train(
         YoloDetectionDataset(train_dir, train=True), batch_size=batch, shuffle=True,
         num_workers=workers, collate_fn=_collate,
     )
-    model = build_fn(min_size, max_size).to(device)
+    model_cfg = model_cfg or {}
+    model = build_fn(min_size, max_size, **model_cfg).to(device)
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(params, lr=lr, momentum=0.9, weight_decay=1e-4)
-    # step decay at 2/3 and 8/9 of training (the "1x schedule" shape)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer, milestones=[int(epochs * 2 / 3), int(epochs * 8 / 9)], gamma=0.1
-    )
+    if lr_schedule == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    else:
+        # step decay at 2/3 and 8/9 of training (the "1x schedule" shape)
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer, milestones=[int(epochs * 2 / 3), int(epochs * 8 / 9)], gamma=0.1
+        )
     scaler = torch.amp.GradScaler(enabled=device.type == "cuda")
     out_dir.mkdir(parents=True, exist_ok=True)
     checkpoint = out_dir / "last.pt"
@@ -128,11 +172,14 @@ def train(
             raise FileNotFoundError(f"--resume given but no checkpoint at {checkpoint}")
         # weights_only=False: the scheduler state holds a Counter; these are our own files
         state = torch.load(checkpoint, map_location=device, weights_only=False)
-        saved = (state["min_size"], state["max_size"], state.get("epochs"))
-        if saved != (min_size, max_size, epochs):
+        # checkpoints from before these options existed used the current defaults
+        saved = (state["min_size"], state["max_size"], state.get("epochs"),
+                 state.get("lr_schedule", "step"), state.get("model_cfg", model_cfg))
+        if saved != (min_size, max_size, epochs, lr_schedule, model_cfg):
             # the LR schedule is tied to --epochs, so a different value would silently break it
-            raise ValueError(f"Checkpoint was started with min/max size {saved[0]}/{saved[1]} and "
-                             f"--epochs {saved[2]}; pass the same values to resume")
+            raise ValueError(f"Checkpoint was started with min/max size {saved[0]}/{saved[1]}, "
+                             f"--epochs {saved[2]}, --lr-schedule {saved[3]}, model options {saved[4]}; "
+                             f"pass the same values to resume")
         model.load_state_dict(state["model"])
         optimizer.load_state_dict(state["optimizer"])
         scheduler.load_state_dict(state["scheduler"])
@@ -162,6 +209,7 @@ def train(
             "model": model.state_dict(), "min_size": min_size, "max_size": max_size,
             "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(),
             "scaler": scaler.state_dict(), "epoch": epoch + 1, "epochs": epochs,
+            "lr_schedule": lr_schedule, "model_cfg": model_cfg,
         }
         # write then rename, so a disconnect during saving can't corrupt last.pt
         torch.save(state, checkpoint.with_suffix(".tmp"))
@@ -176,7 +224,7 @@ def load_trained(weights: Path, build_fn=build_model):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     state = torch.load(weights, map_location=device, weights_only=False)  # own checkpoint; holds scheduler state
-    model = build_fn(state["min_size"], state["max_size"], pretrained=False)
+    model = build_fn(state["min_size"], state["max_size"], pretrained=False, **state.get("model_cfg", {}))
     model.load_state_dict(state["model"])
     return model.to(device).eval(), device
 
@@ -307,7 +355,19 @@ def main(build_fn=build_model, run_name: str = "faster_rcnn", submission: str = 
     train_parser.add_argument("--out-dir", type=Path, default=Path("runs") / run_name)
     train_parser.add_argument("--workers", type=int, default=2)
     train_parser.add_argument("--resume", action="store_true",
-                              help="Continue from <out-dir>/last.pt (same --epochs and sizes)")
+                              help="Continue from <out-dir>/last.pt (same --epochs, sizes and options)")
+    train_parser.add_argument("--lr-schedule", choices=["step", "cosine"], default="step",
+                              help="step: x0.1 at 2/3 and 8/9 of epochs; cosine: smooth decay to 0")
+    if build_fn is build_model:  # two-stage knobs; the one-stage builders sharing this CLI don't take them
+        two_stage = train_parser.add_argument_group("two-stage options")
+        two_stage.add_argument("--rpn-proposals", type=int, default=2000,
+                               help="Proposals kept after RPN NMS and passed to the RoI head")
+        two_stage.add_argument("--roi-batch", type=int, default=512,
+                               help="RoIs sampled per image for the second-stage loss")
+        two_stage.add_argument("--roi-pos-fraction", type=float, default=0.25,
+                               help="Foreground share of the sampled RoIs")
+        two_stage.add_argument("--box-loss", choices=["smooth_l1", "giou"], default="smooth_l1",
+                               help="Second-stage box regression loss")
 
     eval_parser = commands.add_parser("evaluate", help="COCO mAP on a labeled split")
     eval_parser.add_argument("--weights", type=Path, required=True)
@@ -327,7 +387,8 @@ def main(build_fn=build_model, run_name: str = "faster_rcnn", submission: str = 
     args = parser.parse_args()
     if args.command == "train":
         train(args.data_root, args.epochs, args.batch, args.lr, args.min_size, args.max_size,
-              args.out_dir, args.workers, args.resume, build_fn)
+              args.out_dir, args.workers, args.resume, build_fn, args.lr_schedule,
+              {k: v for k, v in vars(args).items() if k in TWO_STAGE_OPTIONS})
     elif args.command == "evaluate":
         evaluate(args.weights, args.split_root, args.batch, args.step, build_fn)
     else:
