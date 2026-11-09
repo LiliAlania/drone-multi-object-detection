@@ -1,0 +1,83 @@
+# Ensemble pipeline (tiles -> YOLOv8s-P2 + Faster R-CNN -> SAHI -> WBF -> submission).
+# Every src.pipeline_* / train_* / infer_sahi / ensemble_wbf / evaluate / make_submission script reads this file.
+# `--debug` switches to a small run in <work_dir>/debug and <runs_dir>/debug (see `debug:`).
+
+seed: 42
+env: auto  # auto (kaggle / colab by their env vars, else local) | local | colab | kaggle
+# env vars PIPELINE_ENV and PIPELINE_DATA_ROOT override `env` and the env's data_root
+
+# per-environment paths and GPU-dependent batch sizes
+envs:
+  local:  # RTX 4060 Laptop, 8 GB
+    data_root: data
+    work_dir: work
+    runs_dir: runs
+    yolo_batch: 16     # smoke test: 2.8 GB at batch 8
+    frcnn_batch: 8     # smoke test: 2.3 GB at batch 4
+    workers: 4
+  colab:  # T4, 16 GB; runs on Drive survive disconnects
+    data_root: /content/data
+    work_dir: /content/work
+    runs_dir: /content/drive/MyDrive/visdrone_runs
+    yolo_batch: 16
+    frcnn_batch: 8
+    workers: 2
+  kaggle:  # 2x T4, 16 GB each; the notebook sets PIPELINE_DATA_ROOT to the competition input
+    data_root: /kaggle/input/multiple-object-video-detection-hw-2-ucu-ai-2026
+    work_dir: /kaggle/working/work
+    runs_dir: /kaggle/working/runs
+    yolo_batch: 16
+    frcnn_batch: 8
+    workers: 2       # 4 CPU cores, shared by the two trainings
+
+data:
+  frame_step: 5        # every k-th frame of each clip for training tiles
+  val_frame_step: 25   # val tiles (training-time validation only; final eval uses full val frames)
+  tile: 640
+  overlap: 0.2
+  keep_empty: 0.1      # share of tiles without objects that are kept
+
+yolo:
+  model: yolov8s-p2.yaml  # extra P2 (stride 4) head
+  weights: yolov8s.pt     # COCO pretrain, transferred to all matching layers
+  epochs: 50
+  imgsz: 640
+  scale: 0.3
+  mosaic: 1.0
+  copy_paste: 0.0
+  patience: 15
+
+frcnn:
+  epochs: 12
+  accumulate: 2        # optimizer step every N batches (effective batch = batch * accumulate = 16)
+  lr: 0.02             # for effective batch 16 (torchvision reference)
+  warmup_iters: 500
+  val_every: 2         # epochs between val mAP checks
+
+infer:
+  slice: 640
+  overlap: 0.2
+  confidence: 0.05
+  postprocess_type: GREEDYNMM
+  match_metric: IOS
+  match_threshold: 0.6
+  val_frame_step: 5    # val frames used for model/ensemble selection
+
+ensemble:
+  weights: [[1, 1], [2, 1], [3, 1], [1, 2]]  # [yolo, frcnn]
+  iou_thr: [0.5, 0.6, 0.7]
+  skip_box_thr: [0.01, 0.05, 0.1]
+
+submission:
+  final_confidence: 0.01  # mAP rewards recall: keep low-score boxes
+
+debug:  # --debug overrides
+  train_clips: 2
+  val_clips: 1
+  val_frames: 8
+  test_frames: 8
+  epochs: 2           # 1 epoch with batch 16 stays inside YOLO warm-up: no boxes >= 0.05
+  ensemble:
+    weights: [[1, 1], [2, 1]]
+    iou_thr: [0.55]
+    skip_box_thr: [0.01, 0.05]

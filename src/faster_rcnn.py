@@ -309,7 +309,8 @@ def coco_map(coco, results: list[dict], image_ids: Sequence[int]) -> dict[str, f
     print(f"mAP@[.5:.95] {metrics['mAP']:.4f} | AP50 {metrics['AP50']:.4f} | "
           f"AP_small {metrics['AP_small']:.4f}  (maxDets={MAX_DETECTIONS})")
     for index, name in enumerate(CLASS_NAMES):
-        print(f"  {name:10s} AP {ap(precision[:, :, index, 0]):.3f}")
+        metrics[f"AP_{name}"] = ap(precision[:, :, index, 0])
+        print(f"  {name:10s} AP {metrics[f'AP_{name}']:.3f}")
     return metrics
 
 
