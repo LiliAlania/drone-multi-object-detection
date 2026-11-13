@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.yolo_baseline import format_predictions, write_dataset_yaml
+from src.models.yolo_baseline import format_predictions, write_dataset_yaml
 
 
 class YoloBaselineTests(unittest.TestCase):

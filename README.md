@@ -72,9 +72,9 @@ to each clip in frame order; ignored-region labels remain in a separate `ignore/
 ```bash
 pip install ultralytics
 # train on the subset (or pass /content/data for the full dataset)
-python -m src.yolo_baseline train --data-root /content/visdrone-subset --epochs 30 --imgsz 1280
+python -m src.models.yolo_baseline train --data-root /content/visdrone-subset --epochs 30 --imgsz 1280
 # write the Kaggle submission
-python -m src.yolo_baseline predict --weights runs/detect/baseline/weights/best.pt \
+python -m src.models.yolo_baseline predict --weights runs/detect/baseline/weights/best.pt \
     --test-root /content/data --out submission.csv
 kaggle competitions submit -c multiple-object-video-detection-hw-2-ucu-ai-2026 -f submission.csv -m "yolo11s baseline"
 ```
@@ -85,11 +85,11 @@ Uses the same YOLO labels and writes the same submission format. Needs `torch` a
 (preinstalled in Colab).
 
 ```bash
-python -m src.faster_rcnn train --data-root /content/visdrone-subset --epochs 12 --batch 4
+python -m src.models.faster_rcnn train --data-root /content/visdrone-subset --epochs 12 --batch 4
 # after a Colab disconnect: same command + --resume (continues from <out-dir>/last.pt)
 # COCO mAP on the labeled val split (--step 5 = every 5th frame, faster)
-python -m src.faster_rcnn evaluate --weights runs/faster_rcnn/last.pt --split-root /content/data/val --step 5
-python -m src.faster_rcnn predict --weights runs/faster_rcnn/last.pt \
+python -m src.models.faster_rcnn evaluate --weights runs/faster_rcnn/last.pt --split-root /content/data/val --step 5
+python -m src.models.faster_rcnn predict --weights runs/faster_rcnn/last.pt \
     --test-root /content/data --out submission_frcnn.csv
 ```
 
@@ -98,9 +98,9 @@ python -m src.faster_rcnn predict --weights runs/faster_rcnn/last.pt \
 Same data, CLI, checkpoint format and submission as Faster R-CNN; only the model differs.
 
 ```bash
-python -m src.fcos train --data-root /content/visdrone-subset --epochs 12 --batch 4
-python -m src.fcos evaluate --weights runs/fcos/last.pt --split-root /content/data/val --step 5
-python -m src.fcos predict --weights runs/fcos/last.pt \
+python -m src.models.fcos train --data-root /content/visdrone-subset --epochs 12 --batch 4
+python -m src.models.fcos evaluate --weights runs/fcos/last.pt --split-root /content/data/val --step 5
+python -m src.models.fcos predict --weights runs/fcos/last.pt \
     --test-root /content/data --out submission_fcos.csv
 ```
 
@@ -109,30 +109,30 @@ python -m src.fcos predict --weights runs/fcos/last.pt \
 Our first pipeline; the ensemble pipeline below builds on its tiling. Trains on 640 px tiles cut from full-resolution frames (ignored regions painted gray, rare-class
 tiles repeated) and predicts on the whole frame at native resolution (same object scale as
 training); `--tile 640` adds overlapping tile passes. See the module
-docstring in `src/tiled_yolo.py` for which EDA finding drives each choice.
+docstring in `src/models/tiled_yolo.py` for which EDA finding drives each choice.
 
 ```bash
 pip install ultralytics
-python -m src.tiled_yolo prepare --data-root /content/visdrone-subset --out /content/visdrone-tiles
-python -m src.tiled_yolo train --data-root /content/visdrone-tiles --epochs 20 \
+python -m src.models.tiled_yolo prepare --data-root /content/visdrone-subset --out /content/visdrone-tiles
+python -m src.models.tiled_yolo train --data-root /content/visdrone-tiles --epochs 20 \
     --project /content/drive/MyDrive/runs/tiled_yolo   # after a disconnect: same command + --resume
 W=/content/drive/MyDrive/runs/tiled_yolo/tiled/weights/best.pt
-python -m src.tiled_yolo evaluate --weights $W --split-root /content/data/val --step 5
-python -m src.tiled_yolo evaluate --weights $W --split-root /content/data/val --step 5 --tile 640  # ablation: + tile passes
-python -m src.tiled_yolo predict --weights $W --test-root /content/data --out submission_tiled.csv
+python -m src.models.tiled_yolo evaluate --weights $W --split-root /content/data/val --step 5
+python -m src.models.tiled_yolo evaluate --weights $W --split-root /content/data/val --step 5 --tile 640  # ablation: + tile passes
+python -m src.models.tiled_yolo predict --weights $W --test-root /content/data --out submission_tiled.csv
 ```
 
 ### RT-DETR (query-based, transformer)
 
 Same tiles, inference and COCO evaluation as the tiled YOLO pipeline; only the model differs.
-Run `src.tiled_yolo prepare` first (the tiles are shared).
+Run `src.models.tiled_yolo prepare` first (the tiles are shared).
 
 ```bash
-python -m src.rtdetr train --data-root /content/visdrone-tiles --epochs 20 \
+python -m src.models.rtdetr train --data-root /content/visdrone-tiles --epochs 20 \
     --project /content/drive/MyDrive/runs/rtdetr   # after a disconnect: same command + --resume
 W=/content/drive/MyDrive/runs/rtdetr/rtdetr/weights/best.pt
-python -m src.rtdetr evaluate --weights $W --split-root /content/data/val --step 5
-python -m src.rtdetr predict --weights $W --test-root /content/data --out submission_rtdetr.csv
+python -m src.models.rtdetr evaluate --weights $W --split-root /content/data/val --step 5
+python -m src.models.rtdetr predict --weights $W --test-root /content/data --out submission_rtdetr.csv
 ```
 
 ### Ensemble pipeline: YOLOv8s-P2 + Faster R-CNN, SAHI, WBF

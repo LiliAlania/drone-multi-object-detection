@@ -37,7 +37,7 @@ def load_detection_model(model: str, weights: Path, cfg: dict):
         return AutoDetectionModel.from_pretrained(model_type="ultralytics", model_path=str(weights),
                                                   confidence_threshold=conf, device=device,
                                                   image_size=cfg["infer"]["slice"]), 0
-    from src.faster_rcnn import load_trained
+    from src.models.faster_rcnn import load_trained
 
     network, _ = load_trained(weights)  # torchvision labels 1..8 (0 = background)
     return AutoDetectionModel.from_pretrained(

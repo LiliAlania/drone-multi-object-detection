@@ -6,8 +6,8 @@ import torch
 
 from torchvision.ops import sigmoid_focal_loss
 
-from src.retinanet_small import build_model as build_small_anchors
-from src.faster_rcnn import main as detection_main
+from src.models.retinanet_small import build_model as build_small_anchors
+from src.models.faster_rcnn import main as detection_main
 
 
 FOCAL_ALPHA = 0.5

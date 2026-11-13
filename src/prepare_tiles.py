@@ -21,7 +21,7 @@ from pathlib import Path
 
 from src.data_utils import CLASS_NAMES, _label_path, _read_yolo_rows
 from src.pipeline_common import DEFAULT_CONFIG, clip_dirs, load_config, seed_everything, tiles_dir
-from src.tiled_yolo import GRAY, crop_targets, tile_windows, yolo_to_xyxy
+from src.models.tiled_yolo import GRAY, crop_targets, tile_windows, yolo_to_xyxy
 
 N_VIS = 5
 

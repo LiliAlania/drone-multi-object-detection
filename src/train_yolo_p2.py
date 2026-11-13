@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from src.pipeline_common import DEFAULT_CONFIG, load_config, seed_everything, tiles_dir
-from src.yolo_baseline import MAX_DETECTIONS
+from src.models.yolo_baseline import MAX_DETECTIONS
 
 
 def train(cfg: dict, resume: bool = False) -> Path:

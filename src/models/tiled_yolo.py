@@ -14,11 +14,11 @@ EDA finding -> what this pipeline does
 - At most 180 objects per frame -> the Kaggle cap of 500 detections is never binding.
 
 Usage (Colab, from the repository root):
-    python -m src.tiled_yolo prepare --data-root /content/visdrone-subset --out /content/visdrone-tiles
-    python -m src.tiled_yolo train --data-root /content/visdrone-tiles --epochs 20 \
+    python -m src.models.tiled_yolo prepare --data-root /content/visdrone-subset --out /content/visdrone-tiles
+    python -m src.models.tiled_yolo train --data-root /content/visdrone-tiles --epochs 20 \
         --project /content/drive/MyDrive/runs/tiled_yolo
-    python -m src.tiled_yolo evaluate --weights .../weights/best.pt --split-root /content/data/val --step 5
-    python -m src.tiled_yolo predict --weights .../weights/best.pt --test-root /content/data \
+    python -m src.models.tiled_yolo evaluate --weights .../weights/best.pt --split-root /content/data/val --step 5
+    python -m src.models.tiled_yolo predict --weights .../weights/best.pt --test-root /content/data \
         --out submission_tiled.csv
 """
 
@@ -33,8 +33,8 @@ from pathlib import Path
 from typing import Sequence
 
 from src.data_utils import _label_path, _read_yolo_rows
-from src.faster_rcnn import IMAGE_SUFFIXES, coco_map
-from src.yolo_baseline import MAX_DETECTIONS, format_predictions, image_dirs, write_dataset_yaml
+from src.models.faster_rcnn import IMAGE_SUFFIXES, coco_map
+from src.models.yolo_baseline import MAX_DETECTIONS, format_predictions, image_dirs, write_dataset_yaml
 
 TILE = 640
 OVERLAP = 0.2
@@ -213,7 +213,7 @@ def sliced_predict(yolo, path: Path, tile: int, overlap: float, full_imgsz: int,
 
 def evaluate(weights: Path, split_root: Path, step: int, tile: int, full_imgsz: int, conf: float,
              arch: str = "yolo") -> dict[str, float]:
-    """COCO mAP on a labeled split, comparable with `src.faster_rcnn evaluate`."""
+    """COCO mAP on a labeled split, comparable with `src.models.faster_rcnn evaluate`."""
     from pycocotools.coco import COCO
 
     from src.data_utils import image_path_for
@@ -257,7 +257,7 @@ def predict(weights: Path, test_root: Path, out: Path, tile: int, full_imgsz: in
 
 def main(arch: str = "yolo", model: str = "yolo11s.pt", name: str = "tiled", batch: int = 16,
          description: str = __doc__) -> None:
-    """CLI shared with src.rtdetr: same tiles and inference, only the model differs."""
+    """CLI shared with src.models.rtdetr: same tiles and inference, only the model differs."""
     parser = argparse.ArgumentParser(description=description, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
 

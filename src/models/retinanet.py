@@ -3,7 +3,7 @@ from torchvision.models.detection import retinanet_resnet50_fpn_v2
 from torchvision.models.detection.retinanet import RetinaNetClassificationHead
 
 from src.data_utils import CLASS_NAMES
-from src.faster_rcnn import YoloDetectionDataset, _collate
+from src.models.faster_rcnn import YoloDetectionDataset, _collate
 
 
 def build_model(min_size=640, max_size=1280, pretrained=True):
@@ -27,7 +27,7 @@ def build_model(min_size=640, max_size=1280, pretrained=True):
     return model
 
 def main():
-    from src.faster_rcnn import main as detection_main
+    from src.models.faster_rcnn import main as detection_main
 
     detection_main(
         build_fn=build_model,

@@ -52,7 +52,7 @@ def coco_from_yolo_tiles(image_dir: Path):
 
 def evaluate_detections(coco, preds: pd.DataFrame, image_ids=None) -> dict[str, float]:
     """Metrics of predictions (PRED_COLUMNS, image_id = COCO id as str) on the given / predicted images."""
-    from src.faster_rcnn import coco_map
+    from src.models.faster_rcnn import coco_map
 
     ids = sorted({int(i) for i in (image_ids if image_ids is not None else preds["image_id"])})
     results = [{"image_id": int(r.image_id), "category_id": int(r.cls) + 1, "score": float(r.score),

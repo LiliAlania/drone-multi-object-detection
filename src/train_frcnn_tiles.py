@@ -1,11 +1,11 @@
 """Train Faster R-CNN (ResNet-50 FPN v2, COCO pretrain) on the same tiles as YOLO.
 
-Model from src.faster_rcnn.build_model: anchors 8..128 px for tiny objects, 2000 RPN proposals,
+Model from src.models.faster_rcnn.build_model: anchors 8..128 px for tiny objects, 2000 RPN proposals,
 500 detections per image, new 8-class (+ background) head. Tiles are fed at their own 640 px.
 AMP, gradient accumulation, linear warm-up + step decay (x0.1 at 2/3 and 8/9 of epochs), val mAP on the val tiles every N epochs.
 
     python -m src.train_frcnn_tiles [--debug] [--resume]
-Checkpoints: <runs_dir>/frcnn/{last,best}.pt (loadable by src.faster_rcnn.load_trained); losses in log.csv.
+Checkpoints: <runs_dir>/frcnn/{last,best}.pt (loadable by src.models.faster_rcnn.load_trained); losses in log.csv.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def validate(model, device, image_dir: Path, batch: int) -> dict[str, float]:
     import torch
 
     from src.evaluate import coco_from_yolo_tiles, evaluate_detections
-    from src.faster_rcnn import _read_images
+    from src.models.faster_rcnn import _read_images
 
     coco, paths = coco_from_yolo_tiles(image_dir)
     rows = []
@@ -50,7 +50,7 @@ def train(cfg: dict, resume: bool = False) -> Path:
     import torch
     from torch.utils.data import DataLoader
 
-    from src.faster_rcnn import YoloDetectionDataset, _collate, build_model
+    from src.models.faster_rcnn import YoloDetectionDataset, _collate, build_model
 
     f, p = cfg["frcnn"], cfg["paths"]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

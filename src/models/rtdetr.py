@@ -5,19 +5,19 @@ assigns one query per object in training, so there are no anchors and no NMS ins
 EDA: at most 180 objects per frame (and fewer per 640 px tile), so RT-DETR's 300 queries suffice.
 
 Trains on the same tiles and uses the same inference and COCO evaluation as our tiled YOLO
-pipeline (src.tiled_yolo), so the comparison isolates the detector itself. NMS is only used to
+pipeline (src.models.tiled_yolo), so the comparison isolates the detector itself. NMS is only used to
 merge boxes across optional tile passes (--tile), not inside the model.
 
 Usage (Colab, from the repository root):
-    python -m src.tiled_yolo prepare --data-root /content/visdrone-subset --out /content/visdrone-tiles
-    python -m src.rtdetr train --data-root /content/visdrone-tiles --epochs 20 \
+    python -m src.models.tiled_yolo prepare --data-root /content/visdrone-subset --out /content/visdrone-tiles
+    python -m src.models.rtdetr train --data-root /content/visdrone-tiles --epochs 20 \
         --project /content/drive/MyDrive/runs/rtdetr   # after a disconnect: same command + --resume
-    python -m src.rtdetr evaluate --weights .../rtdetr/weights/best.pt --split-root /content/data/val --step 5
-    python -m src.rtdetr predict --weights .../rtdetr/weights/best.pt --test-root /content/data \
+    python -m src.models.rtdetr evaluate --weights .../rtdetr/weights/best.pt --split-root /content/data/val --step 5
+    python -m src.models.rtdetr predict --weights .../rtdetr/weights/best.pt --test-root /content/data \
         --out submission_rtdetr.csv
 """
 
-from src.tiled_yolo import main as _main
+from src.models.tiled_yolo import main as _main
 
 
 def main() -> None:

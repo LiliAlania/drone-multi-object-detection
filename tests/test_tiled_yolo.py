@@ -1,7 +1,7 @@
 import importlib.util
 import unittest
 
-from src.tiled_yolo import (
+from src.models.tiled_yolo import (
     ARCHS, crop_targets, native_imgsz, off_inner_edges, repeat_factors, tile_windows, yolo_to_xyxy,
 )
 

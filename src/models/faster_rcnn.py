@@ -1,12 +1,12 @@
 """Two-stage anchor-based detector: torchvision Faster R-CNN (ResNet-50 FPN v2) on VisDrone.
 
-Reads the same YOLO-format labels as src.yolo_baseline (full or subset layout) and writes
+Reads the same YOLO-format labels as src.models.yolo_baseline (full or subset layout) and writes
 the same Kaggle submission CSV.
 
 Usage (Colab, from the repository root):
-    python -m src.faster_rcnn train --data-root /content/visdrone-subset --epochs 12
-    python -m src.faster_rcnn evaluate --weights runs/faster_rcnn/last.pt --split-root /content/data/val
-    python -m src.faster_rcnn predict --weights runs/faster_rcnn/last.pt \
+    python -m src.models.faster_rcnn train --data-root /content/visdrone-subset --epochs 12
+    python -m src.models.faster_rcnn evaluate --weights runs/faster_rcnn/last.pt --split-root /content/data/val
+    python -m src.models.faster_rcnn predict --weights runs/faster_rcnn/last.pt \
         --test-root /content/data --out submission_frcnn.csv
 """
 
@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Sequence
 
 from src.data_utils import CLASS_NAMES, _label_path, _read_yolo_rows
-from src.yolo_baseline import MAX_DETECTIONS, format_predictions, image_dirs
+from src.models.yolo_baseline import MAX_DETECTIONS, format_predictions, image_dirs
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 # One anchor size per FPN level (P2..P6). Smaller than torchvision's (32..512) default
@@ -341,7 +341,7 @@ def predict(weights: Path, test_root: Path, out: Path, batch: int, build_fn=buil
 
 def main(build_fn=build_model, run_name: str = "faster_rcnn", submission: str = "submission_frcnn.csv",
          lr: float = 0.01, description: str = __doc__) -> None:
-    """CLI shared with other torchvision detectors (src.fcos): only the model builder differs."""
+    """CLI shared with other torchvision detectors (src.models.fcos): only the model builder differs."""
     parser = argparse.ArgumentParser(description=description, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
 

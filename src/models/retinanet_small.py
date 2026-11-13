@@ -1,8 +1,8 @@
 
 from torchvision.models.detection.anchor_utils import AnchorGenerator
 
-from src.retinanet import build_model as build_baseline
-from src.faster_rcnn import main as detection_main
+from src.models.retinanet import build_model as build_baseline
+from src.models.faster_rcnn import main as detection_main
 
 
 def build_model(min_size=640, max_size=1280, pretrained=True):

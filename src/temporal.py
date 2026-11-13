@@ -15,7 +15,7 @@ Faster R-CNN, FCOS, YOLO and RT-DETR alike. It is causal (only past frames are u
 Usage (from the repository root):
     # 1. a val index in test_images.csv format, so any detector's `predict` runs on val
     python -m src.temporal index --split-root /content/data/val --out /content/val_index
-    python -m src.faster_rcnn predict --weights runs/faster_rcnn/last.pt \
+    python -m src.models.faster_rcnn predict --weights runs/faster_rcnn/last.pt \
         --test-root /content/val_index --out val_frcnn.csv
     # 2. compare raw vs temporal mAP on val (all val frames, consecutive)
     python -m src.temporal evaluate --pred val_frcnn.csv --images-csv /content/val_index/test_images.csv \
@@ -35,7 +35,7 @@ from pathlib import Path
 
 import numpy as np
 
-from src.yolo_baseline import MAX_DETECTIONS, format_predictions
+from src.models.yolo_baseline import MAX_DETECTIONS, format_predictions
 
 EMPTY = (np.zeros(0, int), np.zeros(0), np.zeros((0, 4)))
 
@@ -190,7 +190,7 @@ def evaluate(pred: Path, images_csv: Path, split_root: Path, args) -> dict[str, 
     """COCO metrics of the raw predictions and of the temporally processed ones."""
     from pycocotools.coco import COCO
 
-    from src.faster_rcnn import coco_map
+    from src.models.faster_rcnn import coco_map
 
     coco = COCO(str(split_root / "annotations_coco.json"))
     frames = read_index(images_csv)

@@ -18,7 +18,7 @@ import pandas as pd
 
 from src.pipeline_common import (DEFAULT_CONFIG, NUM_CLASSES, list_frames, load_config, load_predictions,
                                  preds_path)
-from src.yolo_baseline import MAX_DETECTIONS, format_predictions
+from src.models.yolo_baseline import MAX_DETECTIONS, format_predictions
 
 COLUMNS = ["image_id", "PredictionString"]
 TOLERANCE = 0.5  # px: format_predictions rounds to 0.1

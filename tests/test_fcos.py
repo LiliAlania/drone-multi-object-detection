@@ -7,7 +7,7 @@ class FcosTests(unittest.TestCase):
     def test_trains_and_predicts_with_our_labels(self):
         import torch
 
-        from src.fcos import build_model
+        from src.models.fcos import build_model
 
         model = build_model(min_size=128, max_size=128, pretrained=False)
         self.assertEqual(model.head.classification_head.cls_logits.out_channels, 9)

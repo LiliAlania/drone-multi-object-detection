@@ -1,8 +1,8 @@
 """Ultralytics YOLO baseline: train on VisDrone and write a Kaggle submission CSV.
 
 Usage (Colab, from the repository root):
-    python -m src.yolo_baseline train --data-root /content/visdrone-subset --epochs 30
-    python -m src.yolo_baseline predict --weights runs/detect/baseline/weights/best.pt \
+    python -m src.models.yolo_baseline train --data-root /content/visdrone-subset --epochs 30
+    python -m src.models.yolo_baseline predict --weights runs/detect/baseline/weights/best.pt \
         --test-root /content/data --out submission.csv
 """
 

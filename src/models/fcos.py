@@ -2,12 +2,12 @@
 
 Each FPN location directly predicts class scores, centerness and distances to the 4 box
 sides; no anchor boxes are matched. Training, evaluation and the submission CSV are shared
-with src.faster_rcnn (same data, labels and checkpoint format), so the results compare directly.
+with src.models.faster_rcnn (same data, labels and checkpoint format), so the results compare directly.
 
 Usage (Colab, from the repository root):
-    python -m src.fcos train --data-root /content/visdrone-subset --epochs 12
-    python -m src.fcos evaluate --weights runs/fcos/last.pt --split-root /content/data/val --step 5
-    python -m src.fcos predict --weights runs/fcos/last.pt \
+    python -m src.models.fcos train --data-root /content/visdrone-subset --epochs 12
+    python -m src.models.fcos evaluate --weights runs/fcos/last.pt --split-root /content/data/val --step 5
+    python -m src.models.fcos predict --weights runs/fcos/last.pt \
         --test-root /content/data --out submission_fcos.csv
 """
 
@@ -16,10 +16,10 @@ from __future__ import annotations
 import math
 
 from src.data_utils import CLASS_NAMES
-from src.faster_rcnn import main as _main
-from src.yolo_baseline import MAX_DETECTIONS
+from src.models.faster_rcnn import main as _main
+from src.models.yolo_baseline import MAX_DETECTIONS
 
-# Index 0 is unused so labels match src.faster_rcnn (1..8); FCOS uses sigmoid scores, no background class.
+# Index 0 is unused so labels match src.models.faster_rcnn (1..8); FCOS uses sigmoid scores, no background class.
 NUM_CLASSES = len(CLASS_NAMES) + 1
 PRIOR_PROBABILITY = 0.01  # focal-loss init from the paper: start with every location ~background
 

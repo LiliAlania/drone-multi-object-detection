@@ -1,7 +1,7 @@
 import importlib.util
 import unittest
 
-from src.faster_rcnn import yolo_rows_to_target
+from src.models.faster_rcnn import yolo_rows_to_target
 
 
 class FasterRcnnTests(unittest.TestCase):
@@ -15,7 +15,7 @@ class FasterRcnnTests(unittest.TestCase):
 
     @unittest.skipUnless(importlib.util.find_spec("torchvision"), "torchvision not installed")
     def test_model_has_small_anchors_and_nine_classes(self):
-        from src.faster_rcnn import build_model
+        from src.models.faster_rcnn import build_model
 
         model = build_model(min_size=256, max_size=448, pretrained=False)
         self.assertEqual(model.roi_heads.box_predictor.cls_score.out_features, 9)
@@ -25,7 +25,7 @@ class FasterRcnnTests(unittest.TestCase):
     def test_two_stage_options_reach_the_model(self):
         from torchvision.models.detection import roi_heads
 
-        from src.faster_rcnn import _giou_fastrcnn_loss, build_model
+        from src.models.faster_rcnn import _giou_fastrcnn_loss, build_model
 
         model = build_model(256, 448, pretrained=False, rpn_proposals=500, roi_batch=128,
                             roi_pos_fraction=0.5, box_loss="giou")
@@ -40,7 +40,7 @@ class FasterRcnnTests(unittest.TestCase):
     def test_giou_loss_is_zero_for_exact_boxes_and_positive_otherwise(self):
         import torch
 
-        from src.faster_rcnn import _giou_fastrcnn_loss
+        from src.models.faster_rcnn import _giou_fastrcnn_loss
 
         labels = [torch.tensor([2, 0])]  # one foreground RoI (class 2), one background
         targets = [torch.tensor([[1.0, -2.0, 0.5, 0.3], [0.0, 0.0, 0.0, 0.0]])]
