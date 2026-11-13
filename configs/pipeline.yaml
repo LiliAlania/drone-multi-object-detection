@@ -47,6 +47,30 @@ yolo:
   copy_paste: 0.0
   patience: 15
 
+yolo_hr:  # src.train_yolo_hr: full frames at high resolution (no tiles) for small objects
+  # plain yolov8s: every layer COCO-pretrained (converges in the ~30 epochs we can afford) and P3 (stride 8)
+  # at 1280 already sees 1920-px frames at ~12 px per cell; a P2 head at 1280 would add a 320x320 level:
+  # roughly 1.5-2x memory and time for fresh, untrained layers
+  model: yolov8s.pt
+  imgsz: 1280
+  rect: false
+  batch: 16            # total over device: 8 per T4 with amp (DDP); the single-GPU fallback halves it
+  device: [0, 1]       # DDP; clipped to the GPUs present, falls back to device 0 if DDP fails
+  time: 10.0           # hours from script start (data prep + benchmark included); Ultralytics sets epochs
+  epochs: 30           # only the first epoch's schedule before `time` re-estimates it
+  patience: 100        # effectively off: the time budget ends the run
+  frame_step: auto     # auto: benchmark -> smallest of frame_steps with >= min_epochs; or an int
+  frame_steps: [2, 3, 4, 5]
+  min_epochs: 30
+  mosaic: 1.0
+  close_mosaic: 5
+  scale: 0.5
+  fliplr: 0.5
+  hsv_h: 0.015         # mild color jitter (Ultralytics default h; s, v below the 0.7 / 0.4 defaults)
+  hsv_s: 0.5
+  hsv_v: 0.3
+  tta: false           # inference: Ultralytics augment=True (flips + scales)
+
 frcnn:
   epochs: 12
   accumulate: 2        # optimizer step every N batches (effective batch = batch * accumulate = 16)

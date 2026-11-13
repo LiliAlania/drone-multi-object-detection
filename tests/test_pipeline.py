@@ -31,6 +31,19 @@ class PipelineTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate(COLUMNS, rows, FRAMES)
 
+    def test_hr_frame_step_is_the_smallest_reaching_min_epochs(self):
+        from unittest import mock
+
+        from src import train_yolo_hr
+
+        y = {"frame_steps": [2, 3, 4, 5], "min_epochs": 30, "imgsz": 1280}
+        with mock.patch.object(train_yolo_hr, "train_frames", lambda cfg, step: [None] * (24000 // step)), \
+                mock.patch("builtins.print"):
+            # 1 img/s, no val, 10 h: step 2 -> 3 epochs ... step 5 -> 7.5: none reach 30 -> the largest step
+            self.assertEqual(train_yolo_hr.choose_step({}, y, 1.0, 0.0, 10.0), 5)
+            # 8 img/s: step 2 -> 24 epochs < 30, step 3 -> 36
+            self.assertEqual(train_yolo_hr.choose_step({}, y, 8.0, 0.0, 10.0), 3)
+
     @unittest.skipUnless(importlib.util.find_spec("ensemble_boxes"), "ensemble_boxes not installed")
     def test_wbf_fuses_per_class_in_pixel_coordinates(self):
         from src.ensemble_wbf import fuse

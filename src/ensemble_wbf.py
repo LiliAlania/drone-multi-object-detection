@@ -26,6 +26,8 @@ from src.pipeline_common import (DEFAULT_CONFIG, PRED_COLUMNS, list_frames, load
 
 MODELS = ("yolo", "frcnn")
 FOCUS = ("person", "bicycle", "motor")  # rider pairs: person over bicycle/motor
+COLUMNS = ["mAP", "AP50", "AP_small", *(f"AP_{c}" for c in FOCUS),  # comparison.md
+           *(f"AP_{c}" for c in CLASS_NAMES if c not in FOCUS)]
 
 
 def fuse(predictions: list[pd.DataFrame], sizes: dict[str, tuple[int, int]], weights, iou_thr: float,
@@ -102,9 +104,7 @@ def search(cfg: dict) -> dict:
     save_predictions(fused, preds_path(cfg, "wbf", "val"), image_ids, {"config": best})
     rows = {name: score(df) for name, df in (("YOLOv8s-P2", predictions[0]), ("Faster R-CNN", predictions[1]),
                                              ("WBF", fused))}
-    columns = ["mAP", "AP50", "AP_small", *(f"AP_{c}" for c in FOCUS),
-               *(f"AP_{c}" for c in CLASS_NAMES if c not in FOCUS)]
-    table = pd.DataFrame(rows).T.reindex(columns=columns)
+    table = pd.DataFrame(rows).T.reindex(columns=COLUMNS)
     for model in MODELS:
         meta = json.loads(preds_path(cfg, model, "val").with_suffix(".json").read_text(encoding="utf-8"))
         table.loc["YOLOv8s-P2" if model == "yolo" else "Faster R-CNN", "ms/frame"] = meta["ms_per_frame"]
