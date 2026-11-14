@@ -1,7 +1,12 @@
 """Ultralytics YOLO baseline: train on VisDrone and write a Kaggle submission CSV.
 
+Recent YOLOs are anchor-free: each grid cell centre predicts distances to the 4 box sides
+(see src.yolo_assign for how cells are assigned to objects).
+
 Usage (Colab, from the repository root):
     python -m src.models.yolo_baseline train --data-root /content/visdrone-subset --epochs 30
+    # extra stride-4 head: --model configs/yolo11s-p2.yaml --pretrained yolo11s.pt
+    python -m src.models.yolo_baseline evaluate --weights runs/detect/baseline/weights/last.pt         --split-root /content/data/val --step 5 --imgsz 1280
     python -m src.models.yolo_baseline predict --weights runs/detect/baseline/weights/best.pt \
         --test-root /content/data --out submission.csv
 """
@@ -55,16 +60,28 @@ def format_predictions(
 
 
 def train(
-    data_root: Path, model: str, epochs: int, imgsz: int, batch: int, name: str, fraction: float
+    data_root: Path, model: str, epochs: int, imgsz: int, batch: float, name: str, fraction: float,
+    project: Path = Path("runs/detect"), resume: bool = False, pretrained: str | None = None, workers: int = 8,
 ) -> Path:
     from ultralytics import YOLO
 
-    data_yaml = write_dataset_yaml(data_root, Path(f"{name}_data.yaml"))
-    yolo = YOLO(model)
-    yolo.train(
-        data=str(data_yaml), epochs=epochs, imgsz=imgsz, batch=batch, name=name,
-        fraction=fraction, max_det=MAX_DETECTIONS, exist_ok=True,
-    )
+    if resume:
+        last = project / name / "weights" / "last.pt"
+        if not last.is_file():
+            raise FileNotFoundError(f"--resume given but no checkpoint at {last}")
+        yolo = YOLO(str(last))
+        yolo.train(resume=True)  # restores every setting, incl. epochs and data, from the checkpoint
+    else:
+        project.mkdir(parents=True, exist_ok=True)
+        data_yaml = write_dataset_yaml(data_root, project / f"{name}_data.yaml")
+        yolo = YOLO(model)
+        if pretrained:  # a .yaml model (e.g. the P2 head) starts random; copy every layer whose shape matches
+            yolo.load(pretrained)
+        yolo.train(
+            data=str(data_yaml), epochs=epochs, imgsz=imgsz, batch=int(batch) if batch >= 1 else batch,
+            project=str(project.resolve()), name=name, fraction=fraction, workers=workers,
+            max_det=MAX_DETECTIONS, exist_ok=True,
+        )
     best = Path(yolo.trainer.best)
     print(f"Best weights: {best}")
     return best
@@ -98,6 +115,13 @@ def predict(
     return out
 
 
+def evaluate(weights: Path, split_root: Path, step: int, imgsz: int, conf: float) -> dict[str, float]:
+    """Full-frame COCO mAP (by object size) at `imgsz`, comparable with `src.models.faster_rcnn evaluate`."""
+    from src.models.tiled_yolo import evaluate as coco_evaluate  # imports this module, so not at the top
+
+    return coco_evaluate(weights, split_root, step, tile=0, full_imgsz=imgsz, conf=conf)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -108,9 +132,20 @@ def main() -> None:
     train_parser.add_argument("--epochs", type=int, default=30)
     # 1280 instead of 640: most objects are 10-30 px on 1920x1080 frames
     train_parser.add_argument("--imgsz", type=int, default=1280)
-    train_parser.add_argument("--batch", type=int, default=8)
+    train_parser.add_argument("--batch", type=float, default=8, help="Images per batch, or 0-1 = share of GPU memory")
     train_parser.add_argument("--fraction", type=float, default=1.0)
     train_parser.add_argument("--name", default="baseline")
+    train_parser.add_argument("--project", type=Path, default=Path("runs/detect"), help="Put on Drive to survive disconnects")
+    train_parser.add_argument("--pretrained", help="Weights copied into a .yaml --model, e.g. yolo11s.pt")
+    train_parser.add_argument("--workers", type=int, default=8)
+    train_parser.add_argument("--resume", action="store_true", help="Continue from <project>/<name>/weights/last.pt")
+
+    evaluate_parser = commands.add_parser("evaluate")
+    evaluate_parser.add_argument("--weights", type=Path, required=True)
+    evaluate_parser.add_argument("--split-root", type=Path, required=True, help="Labeled split with annotations_coco.json")
+    evaluate_parser.add_argument("--step", type=int, default=1, help="Evaluate every k-th frame")
+    evaluate_parser.add_argument("--imgsz", type=int, default=1280, help="Inference size: use the training size")
+    evaluate_parser.add_argument("--conf", type=float, default=0.01)
 
     predict_parser = commands.add_parser("predict")
     predict_parser.add_argument("--weights", type=Path, required=True)
@@ -124,7 +159,10 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.command == "train":
-        train(args.data_root, args.model, args.epochs, args.imgsz, args.batch, args.name, args.fraction)
+        train(args.data_root, args.model, args.epochs, args.imgsz, args.batch, args.name, args.fraction,
+              args.project, args.resume, args.pretrained, args.workers)
+    elif args.command == "evaluate":
+        evaluate(args.weights, args.split_root, args.step, args.imgsz, args.conf)
     else:
         predict(args.weights, args.test_root, args.out, args.imgsz, args.conf, args.batch)
 

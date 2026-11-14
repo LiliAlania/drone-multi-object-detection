@@ -111,15 +111,22 @@ python -m src.frcnn_explain gradcam --weights runs/frcnn_base/last.pt --split-ro
 
 Outputs (CSVs + PNGs) go to `<weights dir>/explain/`.
 
-### FCOS (one-stage, anchor-free)
+### Anchor-free: YOLO11s, input resolution and a P2 head
 
-Same data, CLI, checkpoint format and submission as Faster R-CNN; only the model differs.
+[`notebooks/05_anchor_free_yolo.ipynb`](notebooks/05_anchor_free_yolo.ipynb) (Kaggle or Colab) trains the
+YOLO baseline under the anchor-based protocol (every 5th train frame, 12 epochs, every 5th val frame) and tunes
+the input resolution (640 / 960 / 1280) and an extra stride-4 P2 head
+([`configs/yolo11-p2.yaml`](configs/yolo11-p2.yaml)), then compares AP by object size with the tuned
+anchor-based detectors in [`results/anchor_based_reference.csv`](results/anchor_based_reference.csv).
 
 ```bash
-python -m src.models.fcos train --data-root /content/visdrone-subset --epochs 12 --batch 4
-python -m src.models.fcos evaluate --weights runs/fcos/last.pt --split-root /content/data/val --step 5
-python -m src.models.fcos predict --weights runs/fcos/last.pt \
-    --test-root /content/data --out submission_fcos.csv
+# how many grid points (anchor-free locations) each val object gets, per input size and head set
+python -m src.yolo_assign --split-root /content/data/val --step 5 --imgsz 640 960 1280 1536
+python -m src.models.yolo_baseline train --data-root /content/visdrone-subset --epochs 12 --imgsz 1280 \
+    --model configs/yolo11s-p2.yaml --pretrained yolo11s.pt --name p2_1280   # --resume after a disconnect
+# full-frame COCO AP (small / medium / large), same evaluation as Faster R-CNN
+python -m src.models.yolo_baseline evaluate --weights runs/detect/p2_1280/weights/last.pt \
+    --split-root /content/data/val --step 5 --imgsz 1280
 ```
 
 ### Initial experiment: tiled YOLO + sliced inference (EDA-driven)
