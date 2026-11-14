@@ -421,7 +421,7 @@ def predict(weights: Path, test_root: Path, out: Path, batch: int, build_fn=buil
 
 def main(build_fn=build_model, run_name: str = "faster_rcnn", submission: str = "submission_frcnn.csv",
          lr: float = 0.01, description: str = __doc__) -> None:
-    """CLI shared with other torchvision detectors (src.models.fcos): only the model builder differs."""
+    """CLI for torchvision detectors: only the model builder (build_fn) differs."""
     parser = argparse.ArgumentParser(description=description, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
 

@@ -1,7 +1,7 @@
 """Temporal post-processing: improve per-frame detections using previous frames of the same clip.
 
 Works on the Kaggle prediction CSV that every detector in this repo writes, so it applies to
-Faster R-CNN, FCOS, YOLO and RT-DETR alike. It is causal (only past frames are used):
+Faster R-CNN, YOLO and RT-DETR alike. It is causal (only past frames are used):
 
 1. Camera motion (optional, --motion): a similarity transform between consecutive frames is
    estimated from ORB keypoints + RANSAC, and track boxes are warped before matching.
