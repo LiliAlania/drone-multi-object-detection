@@ -62,6 +62,7 @@ def format_predictions(
 def train(
     data_root: Path, model: str, epochs: int, imgsz: int, batch: float, name: str, fraction: float,
     project: Path = Path("runs/detect"), resume: bool = False, pretrained: str | None = None, workers: int = 8,
+    wandb_project: str | None = None,
 ) -> Path:
     from ultralytics import YOLO
 
@@ -70,6 +71,7 @@ def train(
         if not last.is_file():
             raise FileNotFoundError(f"--resume given but no checkpoint at {last}")
         yolo = YOLO(str(last))
+        add_wandb_callbacks(yolo, wandb_project, project / name, resume, {})
         yolo.train(resume=True)  # restores every setting, incl. epochs and data, from the checkpoint
     else:
         project.mkdir(parents=True, exist_ok=True)
@@ -77,6 +79,10 @@ def train(
         yolo = YOLO(model)
         if pretrained:  # a .yaml model (e.g. the P2 head) starts random; copy every layer whose shape matches
             yolo.load(pretrained)
+        add_wandb_callbacks(yolo, wandb_project, project / name, resume, {
+            "detector": Path(model).stem, "pretrained": pretrained or model, "train_images": str(data_root),
+            "heads": "P2-P5" if "p2" in Path(model).stem else "P3-P5",
+        })
         yolo.train(
             data=str(data_yaml), epochs=epochs, imgsz=imgsz, batch=int(batch) if batch >= 1 else batch,
             project=str(project.resolve()), name=name, fraction=fraction, workers=workers,
@@ -85,6 +91,48 @@ def train(
     best = Path(yolo.trainer.best)
     print(f"Best weights: {best}")
     return best
+
+
+def add_wandb_callbacks(yolo, wandb_project: str | None, run_dir: Path, resume: bool, config: dict) -> None:
+    """Log Ultralytics training to W&B in the run that `evaluate` resumes (id in <run_dir>/wandb_id.txt):
+    config, per-epoch train losses / val metrics / lr, and the plots Ultralytics writes at the end.
+
+    Ultralytics' own W&B callback is turned off: it names the W&B project after the --project path.
+    """
+    if not wandb_project:
+        return
+    import wandb
+    from ultralytics.utils import SETTINGS
+
+    from src.models.faster_rcnn import wandb_run
+
+    SETTINGS.update({"wandb": False})
+    run = wandb_run(wandb_project, run_dir, config=config, new=not resume)
+
+    def on_train_start(trainer):
+        run.config.update({k: str(v) if isinstance(v, Path) else v for k, v in vars(trainer.args).items()},
+                          allow_val_change=True)
+
+    logged_epochs = set()
+
+    def on_fit_epoch_end(trainer):
+        if trainer.epoch in logged_epochs:  # Ultralytics fires it again after the final validation of best.pt
+            return
+        logged_epochs.add(trainer.epoch)
+        run.log({**trainer.label_loss_items(trainer.tloss, prefix="train"), **trainer.metrics, **trainer.lr,
+                 "epoch": trainer.epoch + 1})
+
+    def on_train_end(trainer):
+        plots = ["results.png", "confusion_matrix_normalized.png", "BoxPR_curve.png", "BoxF1_curve.png",
+                 "labels.jpg", "train_batch0.jpg", "val_batch0_labels.jpg", "val_batch0_pred.jpg",
+                 "val_batch1_labels.jpg", "val_batch1_pred.jpg"]
+        run.log({f"plots/{Path(p).stem}": wandb.Image(str(trainer.save_dir / p))
+                 for p in plots if (trainer.save_dir / p).is_file()})
+        run.finish()
+
+    yolo.add_callback("on_train_start", on_train_start)
+    yolo.add_callback("on_fit_epoch_end", on_fit_epoch_end)
+    yolo.add_callback("on_train_end", on_train_end)
 
 
 def predict(
@@ -115,11 +163,35 @@ def predict(
     return out
 
 
-def evaluate(weights: Path, split_root: Path, step: int, imgsz: int, conf: float) -> dict[str, float]:
-    """Full-frame COCO mAP (by object size) at `imgsz`, comparable with `src.models.faster_rcnn evaluate`."""
-    from src.models.tiled_yolo import evaluate as coco_evaluate  # imports this module, so not at the top
+def evaluate(weights: Path, split_root: Path, step: int, imgsz: int, conf: float,
+             wandb_project: str | None = None, wandb_images: int = 16) -> dict[str, float]:
+    """Full-frame COCO mAP (by object size) at `imgsz`, comparable with `src.models.faster_rcnn evaluate`.
 
-    return coco_evaluate(weights, split_root, step, tile=0, full_imgsz=imgsz, conf=conf)
+    With wandb_project, logs the metrics and `wandb_images` evenly spaced val frames with GT and predicted
+    boxes into the training run of <weights>/../.. (Ultralytics layout: <project>/<name>/weights/last.pt).
+    """
+    # these modules import this one, so not at the top
+    from src.models.faster_rcnn import log_val_to_wandb, wandb_run
+    from src.models.tiled_yolo import OVERLAP, evaluate as coco_evaluate, load_model, sliced_predict
+
+    metrics = coco_evaluate(weights, split_root, step, tile=0, full_imgsz=imgsz, conf=conf)
+    run = wandb_run(wandb_project, weights.parent.parent)
+    if run:
+        import torch
+        from pycocotools.coco import COCO
+
+        from src.data_utils import image_path_for
+
+        coco = COCO(str(split_root / "annotations_coco.json"))
+        image_ids = sorted(coco.getImgIds())[::step]
+        yolo, outputs = load_model(weights, "yolo"), {}
+        for image_id in image_ids[:: max(len(image_ids) // wandb_images, 1)][:wandb_images]:
+            boxes, scores, classes = sliced_predict(
+                yolo, image_path_for(split_root, coco.imgs[image_id]["file_name"]), 0, OVERLAP, imgsz, conf)
+            outputs[image_id] = {"boxes": torch.tensor(boxes).reshape(-1, 4), "scores": torch.tensor(scores),
+                                 "labels": torch.tensor(classes) + 1}
+        log_val_to_wandb(run, coco, split_root, outputs, metrics | {"imgsz": imgsz}, step)
+    return metrics
 
 
 def main() -> None:
@@ -139,6 +211,7 @@ def main() -> None:
     train_parser.add_argument("--pretrained", help="Weights copied into a .yaml --model, e.g. yolo11s.pt")
     train_parser.add_argument("--workers", type=int, default=8)
     train_parser.add_argument("--resume", action="store_true", help="Continue from <project>/<name>/weights/last.pt")
+    train_parser.add_argument("--wandb-project", help="Log config, loss/metric curves and plots to this W&B project")
 
     evaluate_parser = commands.add_parser("evaluate")
     evaluate_parser.add_argument("--weights", type=Path, required=True)
@@ -146,6 +219,8 @@ def main() -> None:
     evaluate_parser.add_argument("--step", type=int, default=1, help="Evaluate every k-th frame")
     evaluate_parser.add_argument("--imgsz", type=int, default=1280, help="Inference size: use the training size")
     evaluate_parser.add_argument("--conf", type=float, default=0.01)
+    evaluate_parser.add_argument("--wandb-project",
+                                 help="Log metrics and val frames with boxes into the training run's W&B run")
 
     predict_parser = commands.add_parser("predict")
     predict_parser.add_argument("--weights", type=Path, required=True)
@@ -160,9 +235,9 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "train":
         train(args.data_root, args.model, args.epochs, args.imgsz, args.batch, args.name, args.fraction,
-              args.project, args.resume, args.pretrained, args.workers)
+              args.project, args.resume, args.pretrained, args.workers, args.wandb_project)
     elif args.command == "evaluate":
-        evaluate(args.weights, args.split_root, args.step, args.imgsz, args.conf)
+        evaluate(args.weights, args.split_root, args.step, args.imgsz, args.conf, args.wandb_project)
     else:
         predict(args.weights, args.test_root, args.out, args.imgsz, args.conf, args.batch)
 

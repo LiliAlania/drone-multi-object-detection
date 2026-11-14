@@ -129,6 +129,9 @@ python -m src.models.yolo_baseline evaluate --weights runs/detect/p2_1280/weight
     --split-root /content/data/val --step 5 --imgsz 1280
 ```
 
+Add `--wandb-project <name>` to `train` (config, per-epoch loss / mAP / lr curves, Ultralytics plots) and to
+`evaluate` (COCO AP by size + 16 val frames with GT and predicted boxes); both use one W&B run per model.
+
 ### Initial experiment: tiled YOLO + sliced inference (EDA-driven)
 
 Our first pipeline; the ensemble pipeline below builds on its tiling. Trains on 640 px tiles cut from full-resolution frames (ignored regions painted gray, rare-class
