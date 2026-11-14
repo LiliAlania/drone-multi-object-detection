@@ -1,7 +1,7 @@
 """Run the whole ensemble pipeline in order: tiles -> train both -> SAHI val/test -> WBF -> submission.
 
-    python -m src.run_pipeline --debug          # smoke test (minutes)
-    python -m src.run_pipeline --from infer     # e.g. skip tiling/training after a full training run
+    python -m src.ensemble.run_pipeline --debug          # smoke test (minutes)
+    python -m src.ensemble.run_pipeline --from infer     # e.g. skip tiling/training after a full training run
 Each step is the module's own CLI, so any step can also be rerun alone.
 """
 
@@ -13,11 +13,11 @@ import sys
 import time
 
 STEPS = {
-    "tiles": [["src.prepare_tiles", "--force"]],
-    "train": [["src.train_yolo_p2"], ["src.train_frcnn_tiles"]],
-    "infer": [["src.infer_sahi", "--model", m, "--split", s] for m in ("yolo", "frcnn") for s in ("val", "test")],
-    "ensemble": [["src.ensemble_wbf", "search"], ["src.ensemble_wbf", "apply", "--split", "test"]],
-    "submit": [["src.make_submission"]],
+    "tiles": [["src.data.prepare_tiles", "--force"]],
+    "train": [["src.ensemble.train_yolo_p2"], ["src.ensemble.train_frcnn_tiles"]],
+    "infer": [["src.ensemble.infer_sahi", "--model", m, "--split", s] for m in ("yolo", "frcnn") for s in ("val", "test")],
+    "ensemble": [["src.ensemble.ensemble_wbf", "search"], ["src.ensemble.ensemble_wbf", "apply", "--split", "test"]],
+    "submit": [["src.ensemble.make_submission"]],
 }
 
 

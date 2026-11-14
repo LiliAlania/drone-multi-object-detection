@@ -2,7 +2,7 @@
 from torchvision.models.detection import retinanet_resnet50_fpn_v2
 from torchvision.models.detection.retinanet import RetinaNetClassificationHead
 
-from src.data_utils import CLASS_NAMES
+from src.data.data_utils import CLASS_NAMES
 from src.models.faster_rcnn import YoloDetectionDataset, _collate
 
 

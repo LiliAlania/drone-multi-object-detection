@@ -47,7 +47,7 @@ yolo:
   copy_paste: 0.0
   patience: 15
 
-yolo_hr:  # src.train_yolo_hr: full frames at high resolution (no tiles) for small objects
+yolo_hr:  # src.ensemble.train_yolo_hr: full frames at high resolution (no tiles) for small objects
   # plain yolov8s: every layer COCO-pretrained (converges in the ~30 epochs we can afford) and P3 (stride 8)
   # at 1280 already sees 1920-px frames at ~12 px per cell; a P2 head at 1280 would add a 320x320 level:
   # roughly 1.5-2x memory and time for fresh, untrained layers

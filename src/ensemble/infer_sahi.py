@@ -4,8 +4,8 @@
 (postprocess_class_agnostic=False keeps a rider's person box next to its bicycle/motor box)
 with GREEDYNMM on IOS. Low confidence (0.05): the final threshold is applied after the ensemble.
 
-    python -m src.infer_sahi --model yolo --split val [--debug] [--weights PATH]
-yolo_hr (src.train_yolo_hr) is not sliced: one Ultralytics pass on the full frame at yolo_hr.imgsz
+    python -m src.ensemble.infer_sahi --model yolo --split val [--debug] [--weights PATH]
+yolo_hr (src.ensemble.train_yolo_hr) is not sliced: one Ultralytics pass on the full frame at yolo_hr.imgsz
 (TTA if yolo_hr.tta); on val it also prints its comparison.md row.
 Writes <work_dir>/preds/<model>_<split>.parquet (+ .json with frame list and ms/frame).
 """
@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.data_utils import CLASS_NAMES
-from src.pipeline_common import (DEFAULT_CONFIG, PRED_COLUMNS, list_frames, load_config, preds_path,
+from src.data.data_utils import CLASS_NAMES
+from src.ensemble.pipeline_common import (DEFAULT_CONFIG, PRED_COLUMNS, list_frames, load_config, preds_path,
                                  save_predictions, seed_everything)
 
 
@@ -55,7 +55,7 @@ def predict_full_frames(cfg: dict, weights: Path, frames: pd.DataFrame) -> tuple
     """Ultralytics on whole frames (no slicing) -> PRED_COLUMNS rows and ms/frame (first frame = warm-up)."""
     from ultralytics import YOLO
 
-    from src.train_yolo_hr import hr_config
+    from src.ensemble.train_yolo_hr import hr_config
     from src.models.yolo_baseline import MAX_DETECTIONS
 
     y, model = hr_config(cfg), YOLO(str(weights))
@@ -74,9 +74,9 @@ def predict_full_frames(cfg: dict, weights: Path, frames: pd.DataFrame) -> tuple
 
 def print_val_row(cfg: dict, path: Path) -> None:
     """The model's row in the format of <work_dir>/ensemble/comparison.md."""
-    from src.ensemble_wbf import COLUMNS
-    from src.evaluate import evaluate_detections, load_val_coco
-    from src.pipeline_common import load_predictions
+    from src.ensemble.ensemble_wbf import COLUMNS
+    from src.ensemble.evaluate import evaluate_detections, load_val_coco
+    from src.ensemble.pipeline_common import load_predictions
 
     preds, meta = load_predictions(path)
     with contextlib.redirect_stdout(io.StringIO()):  # pycocotools prints a lot

@@ -1,6 +1,6 @@
 """Train a high-resolution YOLO on FULL frames (no tiles) for small objects (Ultralytics, config `yolo_hr:`).
 
-Labels follow src.prepare_tiles: ignored regions painted (114,114,114) and boxes centred in them dropped
+Labels follow src.data.prepare_tiles: ignored regions painted (114,114,114) and boxes centred in them dropped
 (crop_targets with the whole frame as the window). Frames are stored pre-resized to long side = imgsz
 (Ultralytics resizes them on every load anyway), which saves JPEG decoding on Kaggle's 4 CPUs.
 Train: every frame_step-th frame of the train clips; val: exactly the frames of list_frames(cfg, "val").
@@ -10,7 +10,7 @@ then the smallest step of yolo_hr.frame_steps that still gives >= yolo_hr.min_ep
 Training is time-boxed (Ultralytics `time`, hours, counted from script start): Ultralytics re-estimates the
 epoch count every epoch and finishes normally (final val, best.pt).
 
-    python -m src.train_yolo_hr [--debug] [--resume]
+    python -m src.ensemble.train_yolo_hr [--debug] [--resume]
 Weights: <runs_dir>/yolo_hr/weights/{best,last}.pt; frames in <work_dir>/yolo_hr (rebuilt if missing).
 """
 
@@ -27,8 +27,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.data_utils import CLASS_NAMES, _label_path, _read_yolo_rows
-from src.pipeline_common import (CATEGORY_TO_INDEX, DEFAULT_CONFIG, clip_dirs, list_frames, load_config,
+from src.data.data_utils import CLASS_NAMES, _label_path, _read_yolo_rows
+from src.ensemble.pipeline_common import (CATEGORY_TO_INDEX, DEFAULT_CONFIG, clip_dirs, list_frames, load_config,
                                  seed_everything)
 from src.models.tiled_yolo import GRAY, crop_targets, yolo_to_xyxy
 from src.models.yolo_baseline import MAX_DETECTIONS

@@ -1,6 +1,6 @@
 """Train YOLOv8s with an extra P2 (stride 4) head on the shared tiles (Ultralytics).
 
-    python -m src.train_yolo_p2 [--debug] [--resume]
+    python -m src.ensemble.train_yolo_p2 [--debug] [--resume]
 Weights: <runs_dir>/yolo_p2/weights/{best,last}.pt; per-epoch metrics in results.csv there.
 """
 
@@ -10,7 +10,7 @@ import argparse
 import time
 from pathlib import Path
 
-from src.pipeline_common import DEFAULT_CONFIG, load_config, seed_everything, tiles_dir
+from src.ensemble.pipeline_common import DEFAULT_CONFIG, load_config, seed_everything, tiles_dir
 from src.models.yolo_baseline import MAX_DETECTIONS
 
 
@@ -28,7 +28,7 @@ def train(cfg: dict, resume: bool = False) -> Path:
     else:
         data = tiles_dir(cfg) / "data.yaml"
         if not data.is_file():
-            raise FileNotFoundError(f"No tiles at {data}; run src.prepare_tiles first")
+            raise FileNotFoundError(f"No tiles at {data}; run src.data.prepare_tiles first")
         model = YOLO(y["model"]).load(y["weights"])  # P2 layers start fresh, the rest from COCO
         model.train(
             data=str(data.resolve()), epochs=y["epochs"], imgsz=y["imgsz"], batch=cfg["paths"]["yolo_batch"],

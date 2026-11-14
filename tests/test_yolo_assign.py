@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.yolo_assign import assignment_table, has_shared_point, points_inside
+from src.analysis.yolo_assign import assignment_table, has_shared_point, points_inside
 
 
 def test_points_inside_counts_cell_centres_per_stride():

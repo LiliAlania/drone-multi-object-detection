@@ -3,8 +3,8 @@
 WBF (ensemble_boxes) only fuses boxes of the same label, i.e. class by class. Boxes are normalized
 to [0, 1] by the size of their own frame and scaled back afterwards.
 
-    python -m src.ensemble_wbf search [--debug]          # grid on val -> best config + comparison table
-    python -m src.ensemble_wbf apply --split test [--debug]  # fuse test predictions with the best config
+    python -m src.ensemble.ensemble_wbf search [--debug]          # grid on val -> best config + comparison table
+    python -m src.ensemble.ensemble_wbf apply --split test [--debug]  # fuse test predictions with the best config
 Writes <work_dir>/ensemble/{grid.csv,best.json,comparison.md} and preds/wbf_<split>.parquet.
 """
 
@@ -20,8 +20,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.data_utils import CLASS_NAMES
-from src.pipeline_common import (DEFAULT_CONFIG, PRED_COLUMNS, list_frames, load_config, load_predictions,
+from src.data.data_utils import CLASS_NAMES
+from src.ensemble.pipeline_common import (DEFAULT_CONFIG, PRED_COLUMNS, list_frames, load_config, load_predictions,
                                  preds_path, save_predictions)
 
 MODELS = ("yolo", "frcnn")
@@ -67,12 +67,12 @@ def load_pair(cfg: dict, split: str) -> tuple[list[pd.DataFrame], list[str]]:
     loaded = [load_predictions(preds_path(cfg, m, split)) for m in MODELS]
     ids = [m["image_ids"] for _, m in loaded]
     if set(ids[0]) != set(ids[1]):
-        raise ValueError(f"YOLO and Faster R-CNN {split} predictions cover different frames; rerun src.infer_sahi")
+        raise ValueError(f"YOLO and Faster R-CNN {split} predictions cover different frames; rerun src.ensemble.infer_sahi")
     return [df for df, _ in loaded], ids[0]
 
 
 def search(cfg: dict) -> dict:
-    from src.evaluate import evaluate_detections, load_val_coco
+    from src.ensemble.evaluate import evaluate_detections, load_val_coco
 
     coco = load_val_coco(cfg)
     predictions, image_ids = load_pair(cfg, "val")
@@ -120,7 +120,7 @@ def search(cfg: dict) -> dict:
 def apply(cfg: dict, split: str) -> Path:
     best_path = cfg["paths"]["work_dir"] / "ensemble" / "best.json"
     if not best_path.is_file():
-        raise FileNotFoundError(f"No {best_path}; run `python -m src.ensemble_wbf search` first")
+        raise FileNotFoundError(f"No {best_path}; run `python -m src.ensemble.ensemble_wbf search` first")
     best = json.loads(best_path.read_text(encoding="utf-8"))
     predictions, image_ids = load_pair(cfg, split)
     fused = fuse(predictions, frame_sizes(cfg, split, image_ids), best["weights"], best["iou_thr"],

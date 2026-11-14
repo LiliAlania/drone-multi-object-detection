@@ -12,8 +12,8 @@ Ground-truth objects nobody matched are `missed`. Predictions centered in ignore
 Writes to --out: errors.csv (one row per prediction / missed object), per_class.csv,
 by_size.csv, confusion_matrix.png and frames/*.png with the frames that have the most errors.
 
-Usage (predictions on val keyed by COCO image id, see src.temporal `index`):
-    python -m src.compare_gt --pred val_frcnn.csv --split-root /content/data/val --out runs/compare_frcnn
+Usage (predictions on val keyed by COCO image id, see src.analysis.temporal `index`):
+    python -m src.analysis.compare_gt --pred val_frcnn.csv --split-root /content/data/val --out runs/compare_frcnn
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ from pathlib import Path
 
 import numpy as np
 
-from src.data_utils import CLASS_NAMES, image_path_for
-from src.temporal import box_iou, read_predictions
+from src.data.data_utils import CLASS_NAMES, image_path_for
+from src.analysis.temporal import box_iou, read_predictions
 
 SIZES = ((32**2, "small"), (96**2, "medium"), (float("inf"), "large"))  # COCO area buckets
 STYLE = {  # type -> (color, dashed); ground truth solid, predictions dashed (tp shown as matched GT)
@@ -95,7 +95,7 @@ def analyze(pred: Path, split_root: Path, out: Path, conf: float, iou_thr: float
     unknown = [k for k in predictions if not k.isdigit() or int(k) not in images]
     if unknown:
         raise ValueError(f"{len(unknown)} prediction ids are not COCO image ids of this split "
-                         f"(e.g. {unknown[0]}); predict on the `src.temporal index` of this split")
+                         f"(e.g. {unknown[0]}); predict on the `src.analysis.temporal index` of this split")
     rows, per_frame = [], {}
     for key, (classes, scores, boxes) in predictions.items():
         image_id = int(key)

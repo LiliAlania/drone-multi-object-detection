@@ -3,8 +3,8 @@ import unittest
 
 import pandas as pd
 
-from src.make_submission import COLUMNS, build_rows, validate
-from src.pipeline_common import PRED_COLUMNS, load_config
+from src.ensemble.make_submission import COLUMNS, build_rows, validate
+from src.ensemble.pipeline_common import PRED_COLUMNS, load_config
 
 FRAMES = pd.DataFrame([{"image_id": "a", "width": 100, "height": 50}, {"image_id": "b", "width": 100, "height": 50}])
 
@@ -34,7 +34,7 @@ class PipelineTests(unittest.TestCase):
     def test_hr_frame_step_is_the_smallest_reaching_min_epochs(self):
         from unittest import mock
 
-        from src import train_yolo_hr
+        from src.ensemble import train_yolo_hr
 
         y = {"frame_steps": [2, 3, 4, 5], "min_epochs": 30, "imgsz": 1280}
         with mock.patch.object(train_yolo_hr, "train_frames", lambda cfg, step: [None] * (24000 // step)), \
@@ -46,7 +46,7 @@ class PipelineTests(unittest.TestCase):
 
     @unittest.skipUnless(importlib.util.find_spec("ensemble_boxes"), "ensemble_boxes not installed")
     def test_wbf_fuses_per_class_in_pixel_coordinates(self):
-        from src.ensemble_wbf import fuse
+        from src.ensemble.ensemble_wbf import fuse
 
         yolo = pd.DataFrame([("a", 0, 0.8, 10, 10, 30, 40), ("a", 7, 0.7, 10, 10, 30, 40)], columns=PRED_COLUMNS)
         frcnn = pd.DataFrame([("a", 0, 0.6, 12, 10, 32, 40)], columns=PRED_COLUMNS)

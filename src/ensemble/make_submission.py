@@ -4,7 +4,7 @@ Format (as every submission of this repo): `image_id,PredictionString`, one row 
 test_images.csv order; PredictionString = space-separated `class score x y w h` groups
 (class 0..7, xywh in absolute pixels of that frame, <= 500 boxes, highest score first).
 
-    python -m src.make_submission [--pred work/preds/wbf_test.parquet] [--out work/submission.csv] [--debug]
+    python -m src.ensemble.make_submission [--pred work/preds/wbf_test.parquet] [--out work/submission.csv] [--debug]
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.pipeline_common import (DEFAULT_CONFIG, NUM_CLASSES, list_frames, load_config, load_predictions,
+from src.ensemble.pipeline_common import (DEFAULT_CONFIG, NUM_CLASSES, list_frames, load_config, load_predictions,
                                  preds_path)
 from src.models.yolo_baseline import MAX_DETECTIONS, format_predictions
 
@@ -79,7 +79,7 @@ def make(cfg: dict, pred: Path, out: Path) -> Path:
     missing = set(frames["image_id"]) - set(meta["image_ids"])
     if missing and not cfg["debug_mode"]:  # debug predicts only a few frames
         raise ValueError(f"{len(missing)} test frames were never predicted (e.g. {sorted(missing)[0]}); "
-                         f"rerun src.infer_sahi on the full test split")
+                         f"rerun src.ensemble.infer_sahi on the full test split")
     rows = build_rows(preds, frames, cfg["submission"]["final_confidence"])
     validate(COLUMNS, rows, frames)
     out.parent.mkdir(parents=True, exist_ok=True)

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from src.temporal import (add_temporal_args, box_iou, read_predictions, temporal_rescore, warp_boxes,
+from src.analysis.temporal import (add_temporal_args, box_iou, read_predictions, temporal_rescore, warp_boxes,
                           write_predictions)
 
 

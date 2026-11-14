@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path
 from typing import Sequence
 
-from src.data_utils import CLASS_NAMES, image_path_for, load_coco, subsampled_frame_list
+from src.data.data_utils import CLASS_NAMES, image_path_for, load_coco, subsampled_frame_list
 
 
 def build_subset(

@@ -1,11 +1,11 @@
 """Draw the pipeline's predicted boxes on chosen frames: one panel per model (+ ground truth on val).
 
-Reads <work_dir>/preds/<model>_<split>.parquet (src.infer_sahi / src.ensemble_wbf). Frames are picked by
+Reads <work_dir>/preds/<model>_<split>.parquet (src.ensemble.infer_sahi / src.ensemble.ensemble_wbf). Frames are picked by
 image_id (val: COCO id, test: e.g. clip_001_0000001) or by the end of their path (clip/frame.jpg).
 
-    python -m src.show_boxes --split val --images 1 120 uav0000086_00000_v/0000050.jpg
-    python -m src.show_boxes --split test --models wbf yolo_hr --images clip_001_0000001 --conf 0.3
-    python -m src.show_boxes --split val --n 4          # first 4 predicted frames
+    python -m src.ensemble.show_boxes --split val --images 1 120 uav0000086_00000_v/0000050.jpg
+    python -m src.ensemble.show_boxes --split test --models wbf yolo_hr --images clip_001_0000001 --conf 0.3
+    python -m src.ensemble.show_boxes --split val --n 4          # first 4 predicted frames
 Writes <work_dir>/show_boxes/<split>_<image_id>.png.
 """
 
@@ -14,8 +14,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from src.data_utils import CLASS_NAMES
-from src.pipeline_common import DEFAULT_CONFIG, list_frames, load_config, load_predictions, preds_path
+from src.data.data_utils import CLASS_NAMES
+from src.ensemble.pipeline_common import DEFAULT_CONFIG, list_frames, load_config, load_predictions, preds_path
 
 
 def pick_frames(frames, wanted: list[str], n: int):
@@ -62,10 +62,10 @@ def show(cfg: dict, split: str, models: list[str], wanted: list[str], n: int, co
         else:
             print(f"skip {model}: no {path}")
     if not preds:
-        raise FileNotFoundError("No prediction files; run src.infer_sahi / src.ensemble_wbf first")
+        raise FileNotFoundError("No prediction files; run src.ensemble.infer_sahi / src.ensemble.ensemble_wbf first")
     coco = None
     if split == "val":
-        from src.evaluate import load_val_coco
+        from src.ensemble.evaluate import load_val_coco
 
         coco = load_val_coco(cfg)
     out = cfg["paths"]["work_dir"] / "show_boxes"

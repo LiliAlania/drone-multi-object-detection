@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.data_utils import CLASS_NAMES
+from src.data.data_utils import CLASS_NAMES
 
 # The one class mapping of the pipeline: training index = COCO category_id - 1 = submission class.
 NUM_CLASSES = len(CLASS_NAMES)
@@ -114,7 +114,7 @@ def save_predictions(df: pd.DataFrame, path: Path, image_ids, extra: dict | None
 
 def load_predictions(path: Path) -> tuple[pd.DataFrame, dict]:
     if not path.is_file():
-        raise FileNotFoundError(f"No predictions at {path}; run src.infer_sahi first")
+        raise FileNotFoundError(f"No predictions at {path}; run src.ensemble.infer_sahi first")
     meta = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
     df = pd.read_parquet(path)
     df["image_id"] = df["image_id"].astype(str)

@@ -45,13 +45,13 @@ it does not modify the report website.
 2. Set `MOUNT_DRIVE = True` in the setup cell if you want to mount Drive. The notebook
    clones this repository into `/content/drone-multi-object-detection` when needed.
 3. Keep the dataset at `/content/data` to skip downloading. Otherwise the notebook calls
-   `src/get_data.py`, which uses the Kaggle CLI. Install/configure Kaggle credentials in
+   `src/data/get_data.py`, which uses the Kaggle CLI. Install/configure Kaggle credentials in
    Colab and accept the competition rules before running the download cell; no credentials
    are stored in this repository.
 4. Run all cells. Results and figures are saved under `results/`, `figures/eda/`, and
    `splits/`. The notebook intentionally leaves its observations for the student to fill in.
 
-The helpers are in `src/data_utils.py`. Run their synthetic-data tests from the repository
+The helpers are in `src/data/data_utils.py`. Run their synthetic-data tests from the repository
 root with `python -m unittest discover -s tests`.
 
 ### Create a reusable subsampled dataset
@@ -59,7 +59,7 @@ root with `python -m unittest discover -s tests`.
 From a Python environment with pandas and NumPy installed, run:
 
 ```bash
-python -m src.make_subset --data-root /content/data --output-dir /content/visdrone-subset --step 5 --splits train val
+python -m src.data.make_subset --data-root /content/data --output-dir /content/visdrone-subset --step 5 --splits train val
 ```
 
 The command writes a YOLO-layout directory and a `.zip` beside it. To copy the zip to
@@ -99,14 +99,14 @@ Add `--wandb-project <name>` to `train` (config + per-loss curves: RPN objectnes
 classifier/box) and to `evaluate` (val metrics + 16 val frames with GT and predicted boxes). Both log into
 the same W&B run; its id is kept in `<out-dir>/wandb_id.txt`.
 
-**What the model learns and where it fails** (`src.frcnn_explain`, same `--wandb-project` option):
+**What the model learns and where it fails** (`src.analysis.frcnn_explain`, same `--wandb-project` option):
 
 ```bash
 # per GT object: lost by the RPN, by the RoI head, or wrong class; RoI-head confusion on exact GT boxes;
 # t-SNE of 1024-d RoI features by class / size / outcome
-python -m src.frcnn_explain objects --weights runs/frcnn_base/last.pt --split-root /content/data/val --step 5
+python -m src.analysis.frcnn_explain objects --weights runs/frcnn_base/last.pt --split-root /content/data/val --step 5
 # Grad-CAM of single detection scores on ResNet stages C2..C5 and FPN levels P2..P5, TP vs FP
-python -m src.frcnn_explain gradcam --weights runs/frcnn_base/last.pt --split-root /content/data/val --step 50
+python -m src.analysis.frcnn_explain gradcam --weights runs/frcnn_base/last.pt --split-root /content/data/val --step 50
 ```
 
 Outputs (CSVs + PNGs) go to `<weights dir>/explain/`.
@@ -121,7 +121,7 @@ anchor-based detectors in [`results/anchor_based_reference.csv`](results/anchor_
 
 ```bash
 # how many grid points (anchor-free locations) each val object gets, per input size and head set
-python -m src.yolo_assign --split-root /content/data/val --step 5 --imgsz 640 960 1280 1536
+python -m src.analysis.yolo_assign --split-root /content/data/val --step 5 --imgsz 640 960 1280 1536
 python -m src.models.yolo_baseline train --data-root /content/visdrone-subset --epochs 12 --imgsz 1280 \
     --model configs/yolo11s-p2.yaml --pretrained yolo11s.pt --name p2_1280   # --resume after a disconnect
 # full-frame COCO AP (small / medium / large), same evaluation as Faster R-CNN
@@ -172,27 +172,27 @@ for the RTX 4060 laptop, `envs.colab` for a T4; picked automatically). Every scr
 
 ```bash
 pip install -r requirements.txt          # CUDA torch first, see the file header
-python -m src.run_pipeline --debug       # smoke test: tiles -> train -> SAHI -> WBF -> submission (~12 min)
+python -m src.ensemble.run_pipeline --debug       # smoke test: tiles -> train -> SAHI -> WBF -> submission (~12 min)
 ```
 
 **Steps (each one is also its own CLI):**
 
 | Step | Command | Output |
 |---|---|---|
-| 1. Tiles | `python -m src.prepare_tiles --force` | `work/tiles/` + `stats.json`, 5 previews in `vis/` |
-| 2a. YOLO | `python -m src.train_yolo_p2` (`--resume` after a stop) | `runs/yolo_p2/weights/best.pt` |
-| 2b. Faster R-CNN | `python -m src.train_frcnn_tiles` (`--resume`) | `runs/frcnn/best.pt`, losses in `log.csv` |
-| 3. SAHI | `python -m src.infer_sahi --model {yolo,frcnn} --split {val,test}` | `work/preds/<model>_<split>.parquet` |
-| 4. Single-model mAP | `python -m src.evaluate --pred work/preds/yolo_val.parquet` | mAP, AP50, AP_small, AP per class |
-| 5. WBF | `python -m src.ensemble_wbf search`, then `apply --split test` | `work/ensemble/{grid.csv,best.json,comparison.md}` |
-| 6. Submission | `python -m src.make_submission` | `work/submission.csv`, validated before writing |
+| 1. Tiles | `python -m src.data.prepare_tiles --force` | `work/tiles/` + `stats.json`, 5 previews in `vis/` |
+| 2a. YOLO | `python -m src.ensemble.train_yolo_p2` (`--resume` after a stop) | `runs/yolo_p2/weights/best.pt` |
+| 2b. Faster R-CNN | `python -m src.ensemble.train_frcnn_tiles` (`--resume`) | `runs/frcnn/best.pt`, losses in `log.csv` |
+| 3. SAHI | `python -m src.ensemble.infer_sahi --model {yolo,frcnn} --split {val,test}` | `work/preds/<model>_<split>.parquet` |
+| 4. Single-model mAP | `python -m src.ensemble.evaluate --pred work/preds/yolo_val.parquet` | mAP, AP50, AP_small, AP per class |
+| 5. WBF | `python -m src.ensemble.ensemble_wbf search`, then `apply --split test` | `work/ensemble/{grid.csv,best.json,comparison.md}` |
+| 6. Submission | `python -m src.ensemble.make_submission` | `work/submission.csv`, validated before writing |
 
-`python -m src.run_pipeline --from infer` reruns everything after training.
+`python -m src.ensemble.run_pipeline --from infer` reruns everything after training.
 
 **Data decisions**
 - The competition data is already converted to 8 merged classes (`person` = pedestrian + people,
   `tricycle` = tricycle + awning-tricycle), and the submission is scored on them, so both models train
-  on these 8. The mapping lives once in `src/pipeline_common.py` (class index = COCO `category_id` − 1).
+  on these 8. The mapping lives once in `src/ensemble/pipeline_common.py` (class index = COCO `category_id` − 1).
 - Ignored regions (VisDrone 0 "ignored" and 11 "others", `iscrowd=1` here) are painted (114,114,114)
   and the boxes centred in them dropped, before tiling, so the model is not taught that unlabeled
   objects are background.

@@ -14,14 +14,14 @@ Faster R-CNN, YOLO and RT-DETR alike. It is causal (only past frames are used):
 
 Usage (from the repository root):
     # 1. a val index in test_images.csv format, so any detector's `predict` runs on val
-    python -m src.temporal index --split-root /content/data/val --out /content/val_index
+    python -m src.analysis.temporal index --split-root /content/data/val --out /content/val_index
     python -m src.models.faster_rcnn predict --weights runs/faster_rcnn/last.pt \
         --test-root /content/val_index --out val_frcnn.csv
     # 2. compare raw vs temporal mAP on val (all val frames, consecutive)
-    python -m src.temporal evaluate --pred val_frcnn.csv --images-csv /content/val_index/test_images.csv \
+    python -m src.analysis.temporal evaluate --pred val_frcnn.csv --images-csv /content/val_index/test_images.csv \
         --split-root /content/data/val --motion
     # 3. apply to a test submission
-    python -m src.temporal apply --pred submission_frcnn.csv --images-csv /content/data/test_images.csv \
+    python -m src.analysis.temporal apply --pred submission_frcnn.csv --images-csv /content/data/test_images.csv \
         --out submission_frcnn_temporal.csv --motion
 """
 
@@ -170,7 +170,7 @@ def temporal_rescore(frames: list[dict], predictions: dict, args, image_root: Pa
 
 def write_index(split_root: Path, out_dir: Path) -> Path:
     """test_images.csv for a labeled split, keyed by COCO image id, with absolute image paths."""
-    from src.data_utils import image_path_for
+    from src.data.data_utils import image_path_for
 
     data = json.loads((split_root / "annotations_coco.json").read_text(encoding="utf-8"))
     out_dir.mkdir(parents=True, exist_ok=True)

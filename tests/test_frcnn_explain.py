@@ -1,7 +1,7 @@
 import importlib.util
 import unittest
 
-from src.frcnn_explain import size_bucket
+from src.analysis.frcnn_explain import size_bucket
 
 
 class FrcnnExplainTests(unittest.TestCase):
@@ -12,7 +12,7 @@ class FrcnnExplainTests(unittest.TestCase):
     def test_match_labels_every_kind_of_detection(self):
         import torch
 
-        from src.frcnn_explain import match
+        from src.analysis.frcnn_explain import match
 
         gt = torch.tensor([[0, 0, 10, 10], [100, 100, 120, 120]], dtype=torch.float32)
         gt_labels = torch.tensor([1, 3])

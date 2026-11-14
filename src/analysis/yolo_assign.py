@@ -10,7 +10,7 @@ So an object whose resized box contains no grid point never gets a positive and 
 as background, and in dense crowds neighbours compete for the same few points. This script counts,
 on the val annotations, how many candidate points each object gets and how often they are shared.
 
-    python -m src.yolo_assign --split-root /content/data/val --step 5 --imgsz 640 960 1280 1536
+    python -m src.analysis.yolo_assign --split-root /content/data/val --step 5 --imgsz 640 960 1280 1536
 """
 
 from __future__ import annotations

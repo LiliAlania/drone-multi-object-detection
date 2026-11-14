@@ -6,8 +6,8 @@ from pathlib import Path
 
 import numpy as np
 
-from src import data_utils as du
-from src.make_subset import build_subset
+from src.data import data_utils as du
+from src.data.make_subset import build_subset
 
 
 class DataUtilsTests(unittest.TestCase):

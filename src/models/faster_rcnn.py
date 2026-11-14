@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from typing import Sequence
 
-from src.data_utils import CLASS_NAMES, _label_path, _read_yolo_rows
+from src.data.data_utils import CLASS_NAMES, _label_path, _read_yolo_rows
 from src.models.yolo_baseline import MAX_DETECTIONS, format_predictions, image_dirs
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
@@ -310,7 +310,7 @@ def evaluate(weights: Path, split_root: Path, batch: int, step: int, build_fn=bu
     import torch
     from pycocotools.coco import COCO
 
-    from src.data_utils import image_path_for
+    from src.data.data_utils import image_path_for
 
     coco = COCO(str(split_root / "annotations_coco.json"))
     image_ids = sorted(coco.getImgIds())[::step]
@@ -362,7 +362,7 @@ def log_val_to_wandb(run, coco, split_root: Path, outputs: dict, metrics: dict, 
     """
     import wandb
 
-    from src.data_utils import image_path_for
+    from src.data.data_utils import image_path_for
 
     table = wandb.Table(columns=["image_id", "file", "gt_objects", "detections@0.3", "image"])
     for image_id, out in outputs.items():

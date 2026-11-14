@@ -7,8 +7,8 @@ objects  One row per ground-truth object and per confident false positive: the s
 gradcam  Grad-CAM of individual detection scores on the ResNet stages C2..C5 and the FPN levels P2..P5:
          which levels explain small vs large objects, and whether false positives look at the object.
 
-    python -m src.frcnn_explain objects --weights runs/frcnn_base/last.pt --split-root /content/data/val
-    python -m src.frcnn_explain gradcam --weights runs/frcnn_base/last.pt --split-root /content/data/val
+    python -m src.analysis.frcnn_explain objects --weights runs/frcnn_base/last.pt --split-root /content/data/val
+    python -m src.analysis.frcnn_explain gradcam --weights runs/frcnn_base/last.pt --split-root /content/data/val
 Outputs go to <weights dir>/explain/; with --wandb-project they are also logged to the W&B run that trained
 these weights (see src.models.faster_rcnn.wandb_run).
 """
@@ -19,7 +19,7 @@ import argparse
 import math
 from pathlib import Path
 
-from src.data_utils import CLASS_NAMES
+from src.data.data_utils import CLASS_NAMES
 
 IOU_MATCH = 0.5
 SIZES = ("small", "medium", "large")  # COCO: < 32^2, < 96^2, larger (original pixels)
@@ -136,7 +136,7 @@ def collect_objects(model, device, coco, image_ids, split_root: Path, score_thr:
     import torch
     from torchvision.ops import box_iou
 
-    from src.data_utils import image_path_for
+    from src.data.data_utils import image_path_for
     from src.models.faster_rcnn import _read_images
 
     rows, features = [], []
@@ -376,7 +376,7 @@ def collect_gradcam(model, device, coco, image_ids, split_root: Path, score_thr:
     import torch
     import torch.nn.functional as F
 
-    from src.data_utils import image_path_for
+    from src.data.data_utils import image_path_for
     from src.models.faster_rcnn import _read_images
 
     model.requires_grad_(True)  # the frozen stem/layer1 must be in the graph for a C2 gradient

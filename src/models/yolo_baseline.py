@@ -1,7 +1,7 @@
 """Ultralytics YOLO baseline: train on VisDrone and write a Kaggle submission CSV.
 
 Recent YOLOs are anchor-free: each grid cell centre predicts distances to the 4 box sides
-(see src.yolo_assign for how cells are assigned to objects).
+(see src.analysis.yolo_assign for how cells are assigned to objects).
 
 Usage (Colab, from the repository root):
     python -m src.models.yolo_baseline train --data-root /content/visdrone-subset --epochs 30
@@ -18,7 +18,7 @@ import csv
 from pathlib import Path
 from typing import Sequence
 
-from src.data_utils import CLASS_NAMES
+from src.data.data_utils import CLASS_NAMES
 
 MAX_DETECTIONS = 500  # Kaggle scores at most 500 detections per image
 
@@ -28,7 +28,7 @@ def image_dirs(data_root: str | Path) -> tuple[Path, Path]:
     root = Path(data_root).resolve()
     if (root / "train" / "images").is_dir():  # competition layout: train/images, val/images
         train, val = root / "train" / "images", root / "val" / "images"
-    else:  # src.make_subset layout: images/train, images/val
+    else:  # src.data.make_subset layout: images/train, images/val
         train, val = root / "images" / "train", root / "images" / "val"
     if not train.is_dir() or not val.is_dir():
         raise FileNotFoundError(f"No train/val image folders under {root}")
@@ -180,7 +180,7 @@ def evaluate(weights: Path, split_root: Path, step: int, imgsz: int, conf: float
         import torch
         from pycocotools.coco import COCO
 
-        from src.data_utils import image_path_for
+        from src.data.data_utils import image_path_for
 
         coco = COCO(str(split_root / "annotations_coco.json"))
         image_ids = sorted(coco.getImgIds())[::step]

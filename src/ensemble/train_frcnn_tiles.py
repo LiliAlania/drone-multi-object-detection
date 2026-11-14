@@ -4,7 +4,7 @@ Model from src.models.faster_rcnn.build_model: anchors 8..128 px for tiny object
 500 detections per image, new 8-class (+ background) head. Tiles are fed at their own 640 px.
 AMP, gradient accumulation, linear warm-up + step decay (x0.1 at 2/3 and 8/9 of epochs), val mAP on the val tiles every N epochs.
 
-    python -m src.train_frcnn_tiles [--debug] [--resume]
+    python -m src.ensemble.train_frcnn_tiles [--debug] [--resume]
 Checkpoints: <runs_dir>/frcnn/{last,best}.pt (loadable by src.models.faster_rcnn.load_trained); losses in log.csv.
 """
 
@@ -15,7 +15,7 @@ import csv
 import time
 from pathlib import Path
 
-from src.pipeline_common import DEFAULT_CONFIG, load_config, seed_everything, tiles_dir
+from src.ensemble.pipeline_common import DEFAULT_CONFIG, load_config, seed_everything, tiles_dir
 
 TILE_SIZE = 640
 
@@ -27,7 +27,7 @@ def validate(model, device, image_dir: Path, batch: int) -> dict[str, float]:
 
     import torch
 
-    from src.evaluate import coco_from_yolo_tiles, evaluate_detections
+    from src.ensemble.evaluate import coco_from_yolo_tiles, evaluate_detections
     from src.models.faster_rcnn import _read_images
 
     coco, paths = coco_from_yolo_tiles(image_dir)

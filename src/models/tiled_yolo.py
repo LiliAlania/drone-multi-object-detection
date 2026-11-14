@@ -10,7 +10,7 @@ EDA finding -> what this pipeline does
 - Strong class imbalance (car 505k vs bus 9.7k boxes).
   -> repeat-factor sampling (LVIS): tiles with rare classes are written several times.
 - Consecutive frames are near-duplicates (IoU 0.85 at lag 1; step 5 loses only 0.7% of tracks).
-  -> build tiles from the step-5 subset (src.make_subset).
+  -> build tiles from the step-5 subset (src.data.make_subset).
 - At most 180 objects per frame -> the Kaggle cap of 500 detections is never binding.
 
 Usage (Colab, from the repository root):
@@ -32,7 +32,7 @@ import time
 from pathlib import Path
 from typing import Sequence
 
-from src.data_utils import _label_path, _read_yolo_rows
+from src.data.data_utils import _label_path, _read_yolo_rows
 from src.models.faster_rcnn import IMAGE_SUFFIXES, coco_map
 from src.models.yolo_baseline import MAX_DETECTIONS, format_predictions, image_dirs, write_dataset_yaml
 
@@ -216,7 +216,7 @@ def evaluate(weights: Path, split_root: Path, step: int, tile: int, full_imgsz: 
     """COCO mAP on a labeled split, comparable with `src.models.faster_rcnn evaluate`."""
     from pycocotools.coco import COCO
 
-    from src.data_utils import image_path_for
+    from src.data.data_utils import image_path_for
 
     coco = COCO(str(split_root / "annotations_coco.json"))
     image_ids = sorted(coco.getImgIds())[::step]

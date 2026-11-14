@@ -5,7 +5,7 @@ Per frame (every data.frame_step-th of each clip): ignored regions (VisDrone cla
 Tiles: data.tile px, data.overlap overlap; a box is kept if >= 50% of its area is inside the tile
 (clipped to the edge) and both clipped sides are >= 2 px. Only data.keep_empty of empty tiles are kept.
 
-    python -m src.prepare_tiles [--debug] [--force]
+    python -m src.data.prepare_tiles [--debug] [--force]
 Writes <work_dir>/tiles/{images,labels}/{train,val}, data.yaml, stats.json and vis/*.jpg.
 """
 
@@ -19,8 +19,8 @@ import shutil
 from collections import Counter
 from pathlib import Path
 
-from src.data_utils import CLASS_NAMES, _label_path, _read_yolo_rows
-from src.pipeline_common import DEFAULT_CONFIG, clip_dirs, load_config, seed_everything, tiles_dir
+from src.data.data_utils import CLASS_NAMES, _label_path, _read_yolo_rows
+from src.ensemble.pipeline_common import DEFAULT_CONFIG, clip_dirs, load_config, seed_everything, tiles_dir
 from src.models.tiled_yolo import GRAY, crop_targets, tile_windows, yolo_to_xyxy
 
 N_VIS = 5

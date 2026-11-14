@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from src.compare_gt import in_regions, match_frame
+from src.analysis.compare_gt import in_regions, match_frame
 
 
 class CompareGtTests(unittest.TestCase):

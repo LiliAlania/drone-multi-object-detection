@@ -2,7 +2,7 @@
 
 maxDets = 500 (the Kaggle cap); ignored regions (iscrowd=1) are neither TP nor FP.
 
-    python -m src.evaluate --pred work/preds/yolo_val.parquet [--debug]
+    python -m src.ensemble.evaluate --pred work/preds/yolo_val.parquet [--debug]
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.pipeline_common import DEFAULT_CONFIG, load_config, load_predictions
+from src.ensemble.pipeline_common import DEFAULT_CONFIG, load_config, load_predictions
 
 
 def load_val_coco(cfg: dict):
@@ -30,7 +30,7 @@ def coco_from_yolo_tiles(image_dir: Path):
     from PIL import Image
     from pycocotools.coco import COCO
 
-    from src.data_utils import CLASS_NAMES, _label_path, _read_yolo_rows
+    from src.data.data_utils import CLASS_NAMES, _label_path, _read_yolo_rows
 
     paths = sorted(image_dir.glob("*.jpg"))
     images, annotations = [], []
@@ -66,7 +66,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--pred", type=Path, required=True, help="Predictions parquet on val (src.infer_sahi)")
+    parser.add_argument("--pred", type=Path, required=True, help="Predictions parquet on val (src.ensemble.infer_sahi)")
     args = parser.parse_args()
     cfg = load_config(args.config, args.debug)
     preds, meta = load_predictions(args.pred)
