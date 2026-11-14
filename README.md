@@ -91,7 +91,25 @@ python -m src.models.faster_rcnn train --data-root /content/visdrone-subset --ep
 python -m src.models.faster_rcnn evaluate --weights runs/faster_rcnn/last.pt --split-root /content/data/val --step 5
 python -m src.models.faster_rcnn predict --weights runs/faster_rcnn/last.pt \
     --test-root /content/data --out submission_frcnn.csv
+# predictions for val analysis on every 5th frame (a folder whose test_images.csv lists val frames)
+python -m src.models.faster_rcnn predict --weights runs/faster_rcnn/last.pt --test-root val_index --step 5 --out val_frcnn.csv
 ```
+
+Add `--wandb-project <name>` to `train` (config + per-loss curves: RPN objectness/box vs RoI-head
+classifier/box) and to `evaluate` (val metrics + 16 val frames with GT and predicted boxes). Both log into
+the same W&B run; its id is kept in `<out-dir>/wandb_id.txt`.
+
+**What the model learns and where it fails** (`src.frcnn_explain`, same `--wandb-project` option):
+
+```bash
+# per GT object: lost by the RPN, by the RoI head, or wrong class; RoI-head confusion on exact GT boxes;
+# t-SNE of 1024-d RoI features by class / size / outcome
+python -m src.frcnn_explain objects --weights runs/frcnn_base/last.pt --split-root /content/data/val --step 5
+# Grad-CAM of single detection scores on ResNet stages C2..C5 and FPN levels P2..P5, TP vs FP
+python -m src.frcnn_explain gradcam --weights runs/frcnn_base/last.pt --split-root /content/data/val --step 50
+```
+
+Outputs (CSVs + PNGs) go to `<weights dir>/explain/`.
 
 ### FCOS (one-stage, anchor-free)
 
