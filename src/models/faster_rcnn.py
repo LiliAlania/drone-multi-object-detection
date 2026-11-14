@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import sys
 import time
 from pathlib import Path
 from typing import Sequence
@@ -138,21 +139,54 @@ def _collate(batch):
     return tuple(zip(*batch))
 
 
+def wandb_run(project: str | None, run_dir: Path, config: dict | None = None, new: bool = False):
+    """One W&B run per run dir: train writes its id to <run_dir>/wandb_id.txt and evaluate/explain resume it,
+    so curves, metrics and plots of one model sit together. Returns None when project is None."""
+    if not project:
+        return None
+    import wandb
+
+    id_file = run_dir / "wandb_id.txt"
+    run_id = None if new or not id_file.is_file() else id_file.read_text().strip()
+    run = wandb.init(project=project, name=run_dir.name, id=run_id, resume="allow", config=config)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    id_file.write_text(run.id)
+    return run
+
+
+def wandb_boxes(boxes, labels, scores=None) -> dict:
+    """xyxy pixel boxes + 1-based labels -> the `boxes` entry of wandb.Image."""
+    items = []
+    for i, ((x1, y1, x2, y2), label) in enumerate(zip(boxes, labels)):
+        item = {"position": {"minX": x1, "maxX": x2, "minY": y1, "maxY": y2}, "domain": "pixel",
+                "class_id": int(label), "box_caption": CLASS_NAMES[int(label) - 1]}
+        if scores is not None:
+            item["scores"] = {"score": float(scores[i])}
+            item["box_caption"] += f" {scores[i]:.2f}"
+        items.append(item)
+    return {"box_data": items, "class_labels": {i + 1: name for i, name in enumerate(CLASS_NAMES)}}
+
+
 def train(
     data_root: Path, epochs: int, batch: int, lr: float, min_size: int, max_size: int,
     out_dir: Path, workers: int, resume: bool = False, build_fn=build_model,
-    lr_schedule: str = "step", model_cfg: dict | None = None,
+    lr_schedule: str = "step", model_cfg: dict | None = None, wandb_project: str | None = None,
 ) -> Path:
     import torch
     from torch.utils.data import DataLoader
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_dir, _ = image_dirs(data_root)
-    loader = DataLoader(
-        YoloDetectionDataset(train_dir, train=True), batch_size=batch, shuffle=True,
-        num_workers=workers, collate_fn=_collate,
-    )
+    dataset = YoloDetectionDataset(train_dir, train=True)
+    loader = DataLoader(dataset, batch_size=batch, shuffle=True, num_workers=workers, collate_fn=_collate)
     model_cfg = model_cfg or {}
+    run = wandb_run(wandb_project, out_dir, new=not resume, config={
+        # module file name, not __module__: that is "__main__" under `python -m`
+        "detector": Path(sys.modules[build_fn.__module__].__file__).stem, "data_root": str(data_root), "train_images": len(dataset),
+        "epochs": epochs, "batch": batch, "lr": lr, "lr_schedule": lr_schedule, "min_size": min_size,
+        "max_size": max_size, "optimizer": "SGD momentum 0.9 wd 1e-4", "amp": device.type == "cuda",
+        "augment": "hflip 0.5", "anchor_sizes": ANCHOR_SIZES, **model_cfg,
+    })
     model = build_fn(min_size, max_size, **model_cfg).to(device)
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(params, lr=lr, momentum=0.9, weight_decay=1e-4)
@@ -190,11 +224,15 @@ def train(
     for epoch in range(start_epoch, epochs):
         model.train()
         running = 0.0
+        parts: dict[str, float] = {}  # per-loss sums since the last log: RPN (objectness, rpn_box_reg) vs RoI head
         for step, (images, targets) in enumerate(loader, 1):
             images = [image.to(device) for image in images]
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
             with torch.autocast(device.type, enabled=device.type == "cuda"):
-                loss = sum(model(images, targets).values())
+                losses = model(images, targets)
+                loss = sum(losses.values())
+            for key, value in losses.items():
+                parts[key] = parts.get(key, 0.0) + value.item()
             if not torch.isfinite(loss):
                 raise RuntimeError(f"Non-finite loss at epoch {epoch} step {step}; lower --lr")
             optimizer.zero_grad()
@@ -204,6 +242,14 @@ def train(
             running += loss.item()
             if step % 50 == 0:
                 print(f"epoch {epoch + 1}/{epochs} step {step}/{len(loader)} loss {running / step:.4f}")
+                if run:
+                    run.log({**{f"train/{k}": v / 50 for k, v in parts.items()},
+                             "train/loss": sum(parts.values()) / 50, "train/lr": optimizer.param_groups[0]["lr"],
+                             "epoch": epoch + step / len(loader)}, step=epoch * len(loader) + step)
+                parts = {}
+        if run:
+            run.log({"train/epoch_loss": running / max(len(loader), 1), "epoch": epoch + 1},
+                    step=(epoch + 1) * len(loader))
         scheduler.step()
         state = {
             "model": model.state_dict(), "min_size": min_size, "max_size": max_size,
@@ -215,6 +261,8 @@ def train(
         torch.save(state, checkpoint.with_suffix(".tmp"))
         checkpoint.with_suffix(".tmp").replace(checkpoint)
         print(f"epoch {epoch + 1} done, mean loss {running / max(len(loader), 1):.4f}, saved {checkpoint}")
+    if run:
+        run.finish()
     return checkpoint
 
 
@@ -235,10 +283,13 @@ def _read_images(paths: Sequence[Path], device):
     return [read_image(str(p), ImageReadMode.RGB).float().div(255).to(device) for p in paths]
 
 
-def evaluate(weights: Path, split_root: Path, batch: int, step: int, build_fn=build_model) -> dict[str, float]:
+def evaluate(weights: Path, split_root: Path, batch: int, step: int, build_fn=build_model,
+             wandb_project: str | None = None, wandb_images: int = 16) -> dict[str, float]:
     """COCO mAP on a labeled split (e.g. /content/data/val) using its annotations_coco.json.
 
     Ignored regions (iscrowd=1) are matched but not counted, as in the COCO protocol.
+    With wandb_project, logs the metrics and `wandb_images` evenly spaced frames with GT and predicted boxes
+    to the training run of these weights.
     """
     import torch
     from pycocotools.coco import COCO
@@ -248,6 +299,8 @@ def evaluate(weights: Path, split_root: Path, batch: int, step: int, build_fn=bu
     coco = COCO(str(split_root / "annotations_coco.json"))
     image_ids = sorted(coco.getImgIds())[::step]
     model, device = load_trained(weights, build_fn)
+    shown = set(image_ids[:: max(len(image_ids) // wandb_images, 1)][:wandb_images]) if wandb_project else set()
+    shown_outputs = {}
     results = []
     model_seconds = 0.0
     with torch.inference_mode():
@@ -265,6 +318,8 @@ def evaluate(weights: Path, split_root: Path, batch: int, step: int, build_fn=bu
             if start:
                 model_seconds += time.perf_counter() - tick
             for image_id, out in zip(chunk, outputs):
+                if image_id in shown:
+                    shown_outputs[image_id] = {k: v.cpu() for k, v in out.items()}
                 for (x1, y1, x2, y2), score, label in zip(
                     out["boxes"].tolist(), out["scores"].tolist(), out["labels"].tolist()
                 ):
@@ -278,6 +333,26 @@ def evaluate(weights: Path, split_root: Path, batch: int, step: int, build_fn=bu
         metrics["ms_per_image"] = 1000 * model_seconds / timed_images
         print(f"Inference: {metrics['ms_per_image']:.1f} ms/image "
               f"({1000 / metrics['ms_per_image']:.1f} FPS, batch {batch}, {device.type})")
+    run = wandb_run(wandb_project, weights.parent)
+    if run:
+        import wandb
+
+        table = wandb.Table(columns=["image_id", "file", "gt_objects", "detections@0.3", "image"])
+        for image_id, out in shown_outputs.items():
+            anns = [a for a in coco.imgToAnns[image_id] if not a.get("iscrowd")]
+            gt = [[x, y, x + w, y + h] for x, y, w, h in (a["bbox"] for a in anns)]
+            # boxes below 0.1 only clutter the view; the W&B score slider filters the rest
+            keep = out["scores"] >= 0.1
+            image = wandb.Image(str(image_path_for(split_root, coco.imgs[image_id]["file_name"])), boxes={
+                "predictions": wandb_boxes(out["boxes"][keep].tolist(), out["labels"][keep].tolist(),
+                                           out["scores"][keep].tolist()),
+                "ground_truth": wandb_boxes(gt, [a["category_id"] for a in anns]),
+            })
+            table.add_data(image_id, coco.imgs[image_id]["file_name"], len(anns),
+                           int((out["scores"] >= 0.3).sum()), image)
+        run.log({"val/predictions": table, **{f"val/{k}": v for k, v in metrics.items()}})
+        run.summary.update({f"val/{k}": v for k, v in metrics.items()} | {"val/frame_step": step})
+        run.finish()
     return metrics
 
 
@@ -314,13 +389,13 @@ def coco_map(coco, results: list[dict], image_ids: Sequence[int]) -> dict[str, f
     return metrics
 
 
-def predict(weights: Path, test_root: Path, out: Path, batch: int, build_fn=build_model) -> Path:
+def predict(weights: Path, test_root: Path, out: Path, batch: int, build_fn=build_model, step: int = 1) -> Path:
     import torch
 
     model, device = load_trained(weights, build_fn)
 
     with (test_root / "test_images.csv").open(encoding="utf-8") as file:
-        rows = list(csv.DictReader(file))
+        rows = list(csv.DictReader(file))[::step]  # step > 1 only for val analysis: Kaggle needs every test frame
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="", encoding="utf-8") as file, torch.inference_mode():
         writer = csv.writer(file)
@@ -359,6 +434,7 @@ def main(build_fn=build_model, run_name: str = "faster_rcnn", submission: str = 
                               help="Continue from <out-dir>/last.pt (same --epochs, sizes and options)")
     train_parser.add_argument("--lr-schedule", choices=["step", "cosine"], default="step",
                               help="step: x0.1 at 2/3 and 8/9 of epochs; cosine: smooth decay to 0")
+    train_parser.add_argument("--wandb-project", help="Log config and loss curves to this W&B project")
     if build_fn is build_model:  # two-stage knobs; the one-stage builders sharing this CLI don't take them
         two_stage = train_parser.add_argument_group("two-stage options")
         two_stage.add_argument("--rpn-proposals", type=int, default=2000,
@@ -377,6 +453,8 @@ def main(build_fn=build_model, run_name: str = "faster_rcnn", submission: str = 
     eval_parser.add_argument("--batch", type=int, default=4)
     eval_parser.add_argument("--step", type=int, default=1,
                              help="Evaluate every k-th frame (faster; consecutive frames are near-duplicates)")
+    eval_parser.add_argument("--wandb-project",
+                             help="Log metrics and val frames with boxes to the W&B run of these weights")
 
     predict_parser = commands.add_parser("predict")
     predict_parser.add_argument("--weights", type=Path, required=True)
@@ -384,16 +462,18 @@ def main(build_fn=build_model, run_name: str = "faster_rcnn", submission: str = 
                                 help="Folder containing test_images.csv and test/images/")
     predict_parser.add_argument("--out", type=Path, default=Path(submission))
     predict_parser.add_argument("--batch", type=int, default=4)
+    predict_parser.add_argument("--step", type=int, default=1,
+                                help="Predict every k-th listed frame (val analysis only; keep 1 for a submission)")
 
     args = parser.parse_args()
     if args.command == "train":
         train(args.data_root, args.epochs, args.batch, args.lr, args.min_size, args.max_size,
               args.out_dir, args.workers, args.resume, build_fn, args.lr_schedule,
-              {k: v for k, v in vars(args).items() if k in TWO_STAGE_OPTIONS})
+              {k: v for k, v in vars(args).items() if k in TWO_STAGE_OPTIONS}, args.wandb_project)
     elif args.command == "evaluate":
-        evaluate(args.weights, args.split_root, args.batch, args.step, build_fn)
+        evaluate(args.weights, args.split_root, args.batch, args.step, build_fn, args.wandb_project)
     else:
-        predict(args.weights, args.test_root, args.out, args.batch, build_fn)
+        predict(args.weights, args.test_root, args.out, args.batch, build_fn, args.step)
 
 
 if __name__ == "__main__":
