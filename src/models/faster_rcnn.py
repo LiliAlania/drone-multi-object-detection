@@ -148,7 +148,12 @@ def wandb_run(project: str | None, run_dir: Path, config: dict | None = None, ne
 
     id_file = run_dir / "wandb_id.txt"
     run_id = None if new or not id_file.is_file() else id_file.read_text().strip()
-    run = wandb.init(project=project, name=run_dir.name, id=run_id, resume="allow", config=config)
+    kwargs = dict(project=project, name=run_dir.name, id=run_id, resume="allow", config=config)
+    try:
+        run = wandb.init(**kwargs)
+    except Exception as error:  # bad key / no access to the entity must not cost hours of training
+        print(f"W&B online init failed ({error}); logging offline, upload later with `wandb sync`")
+        run = wandb.init(mode="offline", **kwargs)
     run_dir.mkdir(parents=True, exist_ok=True)
     id_file.write_text(run.id)
     return run
