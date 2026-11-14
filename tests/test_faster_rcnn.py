@@ -53,5 +53,34 @@ class FasterRcnnTests(unittest.TestCase):
         self.assertGreater(loss.item(), 0.0)
 
 
+    def test_wandb_run_retries_default_entity_then_offline(self):
+        import os
+        import sys
+        import tempfile
+        import types
+        from pathlib import Path
+        from unittest import mock
+
+        from src.models.faster_rcnn import wandb_run
+
+        def fake_wandb(refusals):
+            calls = []
+
+            def init(**kwargs):
+                calls.append((os.environ.get("WANDB_ENTITY"), kwargs.get("mode")))
+                if len(calls) <= refusals:
+                    raise RuntimeError("you may not log runs directly to your organization")
+                return types.SimpleNamespace(id="abc", url=None, dir="offline-dir")
+            return types.SimpleNamespace(init=init), calls
+
+        for refusals, expected in [(1, [("org", None), (None, None)]),
+                                   (2, [("org", None), (None, None), (None, "offline")])]:
+            wandb, calls = fake_wandb(refusals)
+            with tempfile.TemporaryDirectory() as temp, mock.patch.dict(sys.modules, {"wandb": wandb}),                     mock.patch.dict(os.environ, {"WANDB_ENTITY": "org"}):
+                run = wandb_run("project", Path(temp) / "run")
+                self.assertEqual((Path(temp) / "run" / "wandb_id.txt").read_text(), "abc")
+            self.assertEqual(run.id, "abc")
+            self.assertEqual(calls, expected)
+
 if __name__ == "__main__":
     unittest.main()

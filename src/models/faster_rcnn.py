@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import sys
 import time
 from pathlib import Path
@@ -152,8 +153,17 @@ def wandb_run(project: str | None, run_dir: Path, config: dict | None = None, ne
     try:
         run = wandb.init(**kwargs)
     except Exception as error:  # bad key / no access to the entity must not cost hours of training
-        print(f"W&B online init failed ({error}); logging offline, upload later with `wandb sync`")
-        run = wandb.init(mode="offline", **kwargs)
+        run = None
+        if os.environ.pop("WANDB_ENTITY", None):  # e.g. an organization name: retry with the key's default entity
+            print(f"W&B init failed for the configured entity ({error}); retrying with the default entity")
+            try:
+                run = wandb.init(**kwargs)
+            except Exception as retry_error:
+                error = retry_error
+        if run is None:
+            print(f"W&B online init failed ({error}); logging offline, upload later with `wandb sync`")
+            run = wandb.init(mode="offline", **kwargs)
+    print(f"W&B run: {run.url or run.dir}")
     run_dir.mkdir(parents=True, exist_ok=True)
     id_file.write_text(run.id)
     return run
@@ -340,25 +350,35 @@ def evaluate(weights: Path, split_root: Path, batch: int, step: int, build_fn=bu
               f"({1000 / metrics['ms_per_image']:.1f} FPS, batch {batch}, {device.type})")
     run = wandb_run(wandb_project, weights.parent)
     if run:
-        import wandb
-
-        table = wandb.Table(columns=["image_id", "file", "gt_objects", "detections@0.3", "image"])
-        for image_id, out in shown_outputs.items():
-            anns = [a for a in coco.imgToAnns[image_id] if not a.get("iscrowd")]
-            gt = [[x, y, x + w, y + h] for x, y, w, h in (a["bbox"] for a in anns)]
-            # boxes below 0.1 only clutter the view; the W&B score slider filters the rest
-            keep = out["scores"] >= 0.1
-            image = wandb.Image(str(image_path_for(split_root, coco.imgs[image_id]["file_name"])), boxes={
-                "predictions": wandb_boxes(out["boxes"][keep].tolist(), out["labels"][keep].tolist(),
-                                           out["scores"][keep].tolist()),
-                "ground_truth": wandb_boxes(gt, [a["category_id"] for a in anns]),
-            })
-            table.add_data(image_id, coco.imgs[image_id]["file_name"], len(anns),
-                           int((out["scores"] >= 0.3).sum()), image)
-        run.log({"val/predictions": table, **{f"val/{k}": v for k, v in metrics.items()}})
-        run.summary.update({f"val/{k}": v for k, v in metrics.items()} | {"val/frame_step": step})
-        run.finish()
+        log_val_to_wandb(run, coco, split_root, shown_outputs, metrics, step)
     return metrics
+
+
+def log_val_to_wandb(run, coco, split_root: Path, outputs: dict, metrics: dict, step: int) -> None:
+    """Log val metrics and a table of frames with GT and predicted boxes, then finish the run.
+
+    outputs: {image_id: {"boxes": xyxy tensor, "labels": 1-based tensor, "scores": tensor}}.
+    """
+    import wandb
+
+    from src.data_utils import image_path_for
+
+    table = wandb.Table(columns=["image_id", "file", "gt_objects", "detections@0.3", "image"])
+    for image_id, out in outputs.items():
+        anns = [a for a in coco.imgToAnns[image_id] if not a.get("iscrowd")]
+        gt = [[x, y, x + w, y + h] for x, y, w, h in (a["bbox"] for a in anns)]
+        # boxes below 0.1 only clutter the view; the W&B score slider filters the rest
+        keep = out["scores"] >= 0.1
+        image = wandb.Image(str(image_path_for(split_root, coco.imgs[image_id]["file_name"])), boxes={
+            "predictions": wandb_boxes(out["boxes"][keep].tolist(), out["labels"][keep].tolist(),
+                                       out["scores"][keep].tolist()),
+            "ground_truth": wandb_boxes(gt, [a["category_id"] for a in anns]),
+        })
+        table.add_data(image_id, coco.imgs[image_id]["file_name"], len(anns),
+                       int((out["scores"] >= 0.3).sum()), image)
+    run.log({"val/predictions": table, **{f"val/{k}": v for k, v in metrics.items()}})
+    run.summary.update({f"val/{k}": v for k, v in metrics.items()} | {"val/frame_step": step})
+    run.finish()
 
 
 def coco_map(coco, results: list[dict], image_ids: Sequence[int]) -> dict[str, float]:
