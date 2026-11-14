@@ -162,7 +162,8 @@ def wandb_run(project: str | None, run_dir: Path, config: dict | None = None, ne
                 error = retry_error
         if run is None:
             print(f"W&B online init failed ({error}); logging offline, upload later with `wandb sync`")
-            run = wandb.init(mode="offline", **kwargs)
+            # fresh id: the failed online init still holds run_id ("run ID is in use"), and offline can't resume
+            run = wandb.init(mode="offline", **(kwargs | {"id": None}))
     print(f"W&B run: {run.url or run.dir}")
     run_dir.mkdir(parents=True, exist_ok=True)
     id_file.write_text(run.id)
