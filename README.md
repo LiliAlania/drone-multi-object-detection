@@ -132,6 +132,15 @@ python -m src.models.yolo_baseline evaluate --weights runs/detect/p2_1280/weight
 Add `--wandb-project <name>` to `train` (config, per-epoch loss / mAP / lr curves, Ultralytics plots) and to
 `evaluate` (COCO AP by size + 16 val frames with GT and predicted boxes); both use one W&B run per model.
 
+### YOLO11m + temporal post-processing
+
+[`notebooks/08_temporal_yolo.ipynb`](notebooks/08_temporal_yolo.ipynb) (Kaggle or Colab) trains YOLO11m at 1280
+under the same protocol but with mosaic in 10 of 12 epochs (`--close-mosaic 2`, first checked on YOLO11s at
+960 against the default 10), predicts every val frame and applies `src.analysis.temporal` (camera-motion
+compensation, IoU tracking, score blending, propagation of missed boxes). The temporal parameters are tuned on
+4 val clips and the raw vs temporal AP by object size is reported on the 3 held-out clips; the selected
+settings are then applied to the test predictions (`submission_temporal.csv`).
+
 ### Initial experiment: tiled YOLO + sliced inference (EDA-driven)
 
 Our first pipeline; the ensemble pipeline below builds on its tiling. Trains on 640 px tiles cut from full-resolution frames (ignored regions painted gray, rare-class
