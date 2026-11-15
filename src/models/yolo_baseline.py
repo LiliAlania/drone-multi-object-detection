@@ -62,7 +62,7 @@ def format_predictions(
 def train(
     data_root: Path, model: str, epochs: int, imgsz: int, batch: float, name: str, fraction: float,
     project: Path = Path("runs/detect"), resume: bool = False, pretrained: str | None = None, workers: int = 8,
-    wandb_project: str | None = None,
+    wandb_project: str | None = None, close_mosaic: int = 10,
 ) -> Path:
     from ultralytics import YOLO
 
@@ -86,7 +86,7 @@ def train(
         yolo.train(
             data=str(data_yaml), epochs=epochs, imgsz=imgsz, batch=int(batch) if batch >= 1 else batch,
             project=str(project.resolve()), name=name, fraction=fraction, workers=workers,
-            max_det=MAX_DETECTIONS, exist_ok=True,
+            max_det=MAX_DETECTIONS, exist_ok=True, close_mosaic=close_mosaic,
         )
     best = Path(yolo.trainer.best)
     print(f"Best weights: {best}")
@@ -212,6 +212,8 @@ def main() -> None:
     train_parser.add_argument("--workers", type=int, default=8)
     train_parser.add_argument("--resume", action="store_true", help="Continue from <project>/<name>/weights/last.pt")
     train_parser.add_argument("--wandb-project", help="Log config, loss/metric curves and plots to this W&B project")
+    # Ultralytics' 10 assumes 100+ epochs; with 12 it leaves mosaic on for only the first 2
+    train_parser.add_argument("--close-mosaic", type=int, default=10, help="Last N epochs trained without mosaic")
 
     evaluate_parser = commands.add_parser("evaluate")
     evaluate_parser.add_argument("--weights", type=Path, required=True)
@@ -235,7 +237,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "train":
         train(args.data_root, args.model, args.epochs, args.imgsz, args.batch, args.name, args.fraction,
-              args.project, args.resume, args.pretrained, args.workers, args.wandb_project)
+              args.project, args.resume, args.pretrained, args.workers, args.wandb_project, args.close_mosaic)
     elif args.command == "evaluate":
         evaluate(args.weights, args.split_root, args.step, args.imgsz, args.conf, args.wandb_project)
     else:
