@@ -35,14 +35,18 @@ def image_dirs(data_root: str | Path) -> tuple[Path, Path]:
     return train, val
 
 
-def write_dataset_yaml(data_root: str | Path, output: str | Path) -> Path:
-    """Write an Ultralytics data.yaml with absolute paths for full or subset layouts."""
+def write_dataset_yaml(data_root: str | Path, output: str | Path, train_val: bool = False) -> Path:
+    """Write an Ultralytics data.yaml with absolute paths for full or subset layouts.
+
+    train_val: also train on the val images (final model; its Ultralytics val metrics are then meaningless).
+    """
     root = Path(data_root).resolve()
     train, val = image_dirs(root)
+    train_list = f"[{train.as_posix()}, {val.as_posix()}]" if train_val else train.as_posix()
     names = "\n".join(f"  {index}: {name}" for index, name in enumerate(CLASS_NAMES))
     output = Path(output)
     output.write_text(
-        f"path: {root.as_posix()}\ntrain: {train.as_posix()}\nval: {val.as_posix()}\n"
+        f"path: {root.as_posix()}\ntrain: {train_list}\nval: {val.as_posix()}\n"
         f"names:\n{names}\n",
         encoding="utf-8",
     )
@@ -62,7 +66,8 @@ def format_predictions(
 def train(
     data_root: Path, model: str, epochs: int, imgsz: int, batch: float, name: str, fraction: float,
     project: Path = Path("runs/detect"), resume: bool = False, pretrained: str | None = None, workers: int = 8,
-    wandb_project: str | None = None, close_mosaic: int = 10,
+    wandb_project: str | None = None, close_mosaic: int = 10, train_val: bool = False,
+    mixup: float = 0.0, copy_paste: float = 0.0, scale: float = 0.5,
 ) -> Path:
     from ultralytics import YOLO
 
@@ -75,18 +80,19 @@ def train(
         yolo.train(resume=True)  # restores every setting, incl. epochs and data, from the checkpoint
     else:
         project.mkdir(parents=True, exist_ok=True)
-        data_yaml = write_dataset_yaml(data_root, project / f"{name}_data.yaml")
+        data_yaml = write_dataset_yaml(data_root, project / f"{name}_data.yaml", train_val)
         yolo = YOLO(model)
         if pretrained:  # a .yaml model (e.g. the P2 head) starts random; copy every layer whose shape matches
             yolo.load(pretrained)
         add_wandb_callbacks(yolo, wandb_project, project / name, resume, {
             "detector": Path(model).stem, "pretrained": pretrained or model, "train_images": str(data_root),
-            "heads": "P2-P5" if "p2" in Path(model).stem else "P3-P5",
+            "heads": "P2-P5" if "p2" in Path(model).stem else "P3-P5", "train_val": train_val,
         })
         yolo.train(
             data=str(data_yaml), epochs=epochs, imgsz=imgsz, batch=int(batch) if batch >= 1 else batch,
             project=str(project.resolve()), name=name, fraction=fraction, workers=workers,
             max_det=MAX_DETECTIONS, exist_ok=True, close_mosaic=close_mosaic,
+            mixup=mixup, copy_paste=copy_paste, scale=scale,
         )
     best = Path(yolo.trainer.best)
     print(f"Best weights: {best}")
@@ -214,6 +220,11 @@ def main() -> None:
     train_parser.add_argument("--wandb-project", help="Log config, loss/metric curves and plots to this W&B project")
     # Ultralytics' 10 assumes 100+ epochs; with 12 it leaves mosaic on for only the first 2
     train_parser.add_argument("--close-mosaic", type=int, default=10, help="Last N epochs trained without mosaic")
+    train_parser.add_argument("--train-val", action="store_true", help="Train on train + val images (final model)")
+    # Ultralytics defaults; raised against the classification overfitting of 12-epoch runs
+    train_parser.add_argument("--mixup", type=float, default=0.0)
+    train_parser.add_argument("--copy-paste", type=float, default=0.0)
+    train_parser.add_argument("--scale", type=float, default=0.5, help="Random zoom range +-scale")
 
     evaluate_parser = commands.add_parser("evaluate")
     evaluate_parser.add_argument("--weights", type=Path, required=True)
@@ -237,7 +248,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "train":
         train(args.data_root, args.model, args.epochs, args.imgsz, args.batch, args.name, args.fraction,
-              args.project, args.resume, args.pretrained, args.workers, args.wandb_project, args.close_mosaic)
+              args.project, args.resume, args.pretrained, args.workers, args.wandb_project, args.close_mosaic,
+              args.train_val, args.mixup, args.copy_paste, args.scale)
     elif args.command == "evaluate":
         evaluate(args.weights, args.split_root, args.step, args.imgsz, args.conf, args.wandb_project)
     else:

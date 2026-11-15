@@ -23,6 +23,8 @@ class YoloBaselineTests(unittest.TestCase):
             self.assertIn("full/train/images", full)
             self.assertIn("subset/images/val", subset)
             self.assertIn("  7: motor", subset)
+            both = write_dataset_yaml(root / "subset", root / "both.yaml", train_val=True).read_text()
+            self.assertRegex(both, r"train: \[.*subset/images/train, .*subset/images/val\]")
             with self.assertRaises(FileNotFoundError):
                 write_dataset_yaml(root, root / "bad.yaml")
 
