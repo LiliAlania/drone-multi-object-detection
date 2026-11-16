@@ -147,15 +147,11 @@ The RPN finds 91% of all objects, but many are lost in the second stage. Even wh
 
 ### 2.4 Unsuccessful attempts
 
-- **RT-DETR-L** reached only 0.019 mAP and stopped improving from epoch 3. The 200-query
-  run did not learn at all (mAP 0 at every epoch); we did not find the cause. With 8 epochs, lr 1e-5, batch 1
-  and 640 px input, the setup under-performs rather than being unfinished.
-- **GIoU loss** and a **positive fraction of 0.5** did not improve Faster R-CNN mAP.
-- **Small anchors in RetinaNet:** AP_small +0.019 and AP50 +0.033, but AP75 and AP_large fell, so mAP stayed the same.
-- **P2 head in YOLO at 1280** lowered AP_small (0.082 → 0.077). Only half of the weights could be loaded from
-  COCO, the run used batch 4 instead of 8, and it was still improving at epoch 12.
-- **Temporal post-processing** gave only +0.003 mAP on held-out clips. Gains were consistent on all 5 held-out
-  clips (+0.0025 to +0.0055) and larger in dense frames (+0.005), but small in absolute terms.
+- **RT-DETR-L** performed poorly, reaching only 0.019 mAP, about eight times lower than RetinaNet. Its performance stopped improving after epoch 3. The version with 200 queries did not learn at all (mAP = 0), and we could not identify why. Even after 8 epochs, the results were low.
+- **Faster R-CNN**: Changing the box loss to GIoU or increasing the positive sample fraction to 0.5 did not improve the mAP.
+- **Small anchors in RetinaNet:** Detection of small objects improved (AP_small +0.019), and  AP50 too (+0.033). But, AP75 and AP_large decreased, so the overall mAP was almost the same.
+- **P2 head in YOLO at 1280**  P2 head at 1280 px reduced AP_small from 0.082 to 0.077. This may be because only half of the pretrained COCO weights could be reused and the batch size was reduced from 8 to 4. The model was still improving at epoch 12.
+- **Temporal post-processing** The improvement was small (+0.003 mAP), although it helped on all 5 held-out clips (+0.0025 to +0.0055). The effect was larger in crowded frames (+0.005 mAP).
 
 ### 2.5 Failure cases
 
