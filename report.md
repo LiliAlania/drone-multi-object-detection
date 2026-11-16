@@ -147,7 +147,7 @@ The RPN finds 91% of all objects, but many are lost in the second stage. Even wh
 
 ### 2.4 Unsuccessful attempts
 
-- **RT-DETR-L** reached only 0.019 mAP, about one eighth of RetinaNet, and plateaued from epoch 3. The 200-query
+- **RT-DETR-L** reached only 0.019 mAP and stopped improving from epoch 3. The 200-query
   run did not learn at all (mAP 0 at every epoch); we did not find the cause. With 8 epochs, lr 1e-5, batch 1
   and 640 px input, the setup under-performs rather than being unfinished.
 - **GIoU loss** and a **positive fraction of 0.5** did not improve Faster R-CNN mAP.
@@ -186,35 +186,23 @@ The RPN finds 91% of all objects, but many are lost in the second stage. Even wh
 
 ## 3. Final model and run instructions
 
-**Selected model: YOLO11m at 1280 px + temporal post-processing**
+**Our pipeline: YOLO11m at 1280 px + temporal post-processing**
 ([`notebooks/08_temporal_yolo.ipynb`](notebooks/08_temporal_yolo.ipynb)).
 
-Why this model, and not Faster R-CNN, which has the best single-frame val mAP:
-- The YOLO11s search (Section 2.2) showed that resolution is the main lever and that 1280 px is the best size.
-  YOLO11m is the larger model of the same family at that size, and it is ~10× faster than Faster R-CNN. That
-  makes it practical to predict every one of the 3,811 test frames in order, which tracking needs.
-- The test data is video, and the temporal step (`src.analysis.temporal`) uses detections from earlier frames of
-  the same clip to correct the current frame. On the frozen RetinaNet it gave a consistent gain on every held-out
-  clip (Section 2.4).
-- A 12-epoch YOLO11m run peaked at epoch 3 (Ultralytics val mAP50-95 0.238, 0.213 at epoch 12) and then overfit:
-  train cls_loss kept falling while val cls_loss rose from epoch 5. So the final recipe trains **6 epochs** with
-  stronger augmentation.
+The selected model we implemented is **YOLO11m with temporal post-processing**, which showed the best public scrore (0.27).
 
-**Temporal post-processing** (causal: only earlier frames of the same clip are used):
-1. *Camera motion*: a similarity transform between consecutive frames, from ORB keypoints and RANSAC. Track boxes
-   are warped before matching; otherwise a panning drone moves a 10 px object out of IoU range.
-2. *Tracking*: per class, tracks are matched to current detections by IoU (Hungarian matching, IoU ≥ 0.5).
-3. *Rescoring*: a matched detection's score is blended with its track's running score (`weight`). Weak
-   detections of objects seen confidently before go up, and one-frame false positives go down.
-4. *Propagation*: a confident track (score ≥ 0.5) missed in the current frame adds its warped box, with the score
-   decayed ×0.8 per frame, for up to `max_age` frames.
+Run of yolo11s-960: https://forge.coreweave.com/wandb/svyrydenkoiryna972-ukrainian-catholic-university/drone-multi-object-detection/runs/2xqwqm4h?nw=nwusersvyrydenkoiryna972
 
-The parameters were chosen by a grid on 4 of the 7 val clips: `weight` ∈ {0.3, 0.5, 0.7} × `max_age` ∈ {0, 3, 6},
-then motion compensation on/off at the best point. The gain is reported on the other 3 clips only.
+Run of yolo11s-960-cm2: https://forge.coreweave.com/wandb/svyrydenkoiryna972-ukrainian-catholic-university/drone-multi-object-detection/runs/dghvmbw1?nw=nwusersvyrydenkoiryna972
+
+Run of yolo11m-1280: https://forge.coreweave.com/wandb/svyrydenkoiryna972-ukrainian-catholic-university/drone-multi-object-detection/runs/66u5gfse?nw=nwusersvyrydenkoiryna972
+
+Run of yolo11m_1280_temporal: https://forge.coreweave.com/wandb/svyrydenkoiryna972-ukrainian-catholic-university/drone-multi-object-detection/runs/v8y0ypkk?nw=nwusersvyrydenkoiryna972
+
 
 **Dependencies.** Python 3.12+, CUDA PyTorch, `ultralytics==8.4.208`, `pycocotools`, `opencv-python`
-(ORB features), `numpy`, `pandas`, `scipy` (Hungarian matching); optional `wandb`. All pins are in
-[`requirements.txt`](requirements.txt). Run on Kaggle or Colab with one Tesla T4 (~3 h in total).
+(ORB features), `numpy`, `pandas`, `scipy` (Hungarian matching); `wandb`. All requirements are in
+[`requirements.txt`](requirements.txt). Run on Kaggle or Colab with GPU.
 
 **Settings.**
 
@@ -231,43 +219,33 @@ then motion compensation on/off at the best point. The gain is reported on the o
 | Temporal | `iou` 0.5, `ema` 0.7, `new_track` 0.3, `propagate` 0.5, `decay` 0.8; `weight`, `max_age` and `motion` as selected on the 4 tuning clips |
 | Seed | Ultralytics defaults: `seed=0`, `deterministic=True` |
 
-The submission model is retrained on train + val because the 7 val clips contain scenes the train split does not
-have. Its val numbers would be fitted, so it is not evaluated. The same recipe trained on train only is what the
-validation in the notebook measures.
 
-**Steps** (from the repository root; the notebook runs the same on Kaggle or Colab):
+**How to run the final model**:
 
 ```bash
 pip install -r requirements.txt
-# 1. data (needs Kaggle credentials and the accepted competition rules)
+
 python -m src.data.get_data --output-dir data
 python -m src.data.make_subset --data-root data --output-dir visdrone-subset --step 5 --splits train val
 
-# 2. validation run: train on train only, COCO AP on every 5th val frame
 python -m src.models.yolo_baseline train --data-root visdrone-subset --model yolo11m.pt --epochs 6 --imgsz 1280 \
     --batch 4 --close-mosaic 4 --mixup 0.1 --copy-paste 0.1 --scale 0.7 --project runs --name yolo11m_1280_e6_aug
 python -m src.models.yolo_baseline evaluate --weights runs/yolo11m_1280_e6_aug/weights/last.pt \
     --split-root data/val --step 5 --imgsz 1280
 
-# 3. temporal tuning: predict every val frame, then compare raw vs temporal
 python -m src.analysis.temporal index --split-root data/val --out val_index
 python -m src.models.yolo_baseline predict --weights runs/yolo11m_1280_e6_aug/weights/last.pt \
     --test-root val_index --out val_all_frames.csv --imgsz 1280 --conf 0.01 --batch 8
 python -m src.analysis.temporal evaluate --pred val_all_frames.csv --images-csv val_index/test_images.csv \
     --split-root data/val --weight <W> --max-age <A> [--motion]
 
-# 4. submission model: same settings on train + val
 python -m src.models.yolo_baseline train --data-root visdrone-subset --model yolo11m.pt --epochs 6 --imgsz 1280 \
     --batch 4 --close-mosaic 4 --mixup 0.1 --copy-paste 0.1 --scale 0.7 --project runs \
     --name yolo11m_1280_e6_aug_trainval --train-val
 
-# 5. predict all 3,811 test frames, then apply the selected temporal settings
 python -m src.models.yolo_baseline predict --weights runs/yolo11m_1280_e6_aug_trainval/weights/last.pt \
     --test-root data --out submission_raw.csv --imgsz 1280 --conf 0.01 --batch 8
 python -m src.analysis.temporal apply --pred submission_raw.csv --images-csv data/test_images.csv \
     --out submission_temporal.csv --weight <W> --max-age <A> [--motion]
 ```
-
-`<W>`, `<A>` and `--motion` are the values selected in step 3 (the notebook passes them automatically).
-`submission_temporal.csv` has the columns `image_id, PredictionString`, as the competition expects. After a
-disconnect, add `--resume` to a `train` command to continue from `last.pt`.
+After a disconnect, add `--resume` to a `train` command to continue from `last.pt`.
