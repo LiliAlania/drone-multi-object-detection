@@ -170,9 +170,9 @@ The RPN finds 91% of all objects, but many are lost in the second stage. Even wh
 ### 2.6 Conclusions
 
 - **Resolution matters most.** Native-resolution input added +0.070 mAP to Faster R-CNN, and 640 → 1280 added
-  +0.047 to YOLO11s. Loss and anchor changes stayed within ±0.002.
+  +0.047 to YOLO11s. Loss and anchor changes stayed within 0.002.
 - **The two-stage detector is the most accurate** (0.237 mAP, 0.091 AP_small) but ~10× slower than YOLO11s-P2
-  (0.179). Anchor-free YOLO beats anchor-based RetinaNet on every object size and is 2.4× faster.
+  (0.179). Anchor-free YOLO beats anchor-based RetinaNet on every object size and is 2.4 faster.
 - **The bottleneck is classification of small objects,** not finding them: the RPN proposes 84% of small objects,
   but the head keeps only about a third.
 - **Query-based RT-DETR did not work** under our training budget.
@@ -196,24 +196,24 @@ Run of yolo11m-1280: https://forge.coreweave.com/wandb/svyrydenkoiryna972-ukrain
 Run of yolo11m_1280_temporal: https://forge.coreweave.com/wandb/svyrydenkoiryna972-ukrainian-catholic-university/drone-multi-object-detection/runs/v8y0ypkk?nw=nwusersvyrydenkoiryna972
 
 
-**Dependencies.** Python 3.12+, CUDA PyTorch, `ultralytics==8.4.208`, `pycocotools`, `opencv-python`
-(ORB features), `numpy`, `pandas`, `scipy` (Hungarian matching); `wandb`. All requirements are in
+**Dependencies.** Python 3.12+, CUDA PyTorch, ultralytics==8.4.208, pycocotools, opencv-python
+(ORB features), numpy, pandas, scipy (for Hungarian matching); wandb. All requirements are in
 [`requirements.txt`](requirements.txt). Run on Kaggle or Colab with GPU.
 
 **Settings.**
 
 | Setting | Value |
 |---|---|
-| Model | `yolo11m.pt` (COCO-pretrained), heads P3–P5 |
-| Training frames | every 5th frame of each clip; the submission model uses **train + val** (`--train-val`) |
+| Model | yolo11m.pt (COCO-pretrained), heads P3–P5 |
+| Training frames | every 5th frame of each clip; the submission model uses **train + val** |
 | Input size | 1280 |
 | Epochs, batch | 6, 4 (Ultralytics accumulates gradients to a nominal batch of 64) |
-| Augmentation | Ultralytics defaults + `mixup` 0.1, `copy_paste` 0.1, `scale` 0.7; mosaic in epochs 1–2 only (`--close-mosaic 4`) |
-| Optimizer, schedule | Ultralytics defaults (`optimizer=auto`, linear LR decay, warm-up) |
-| Weights used | `last.pt` (final epoch) |
-| Inference | `imgsz` 1280, confidence ≥ 0.01, at most 500 boxes per frame |
-| Temporal | `iou` 0.5, `ema` 0.7, `new_track` 0.3, `propagate` 0.5, `decay` 0.8; `weight`, `max_age` and `motion` as selected on the 4 tuning clips |
-| Seed | Ultralytics defaults: `seed=0`, `deterministic=True` |
+| Augmentation | Ultralytics defaults + mixup 0.1, copy_paste 0.1, scale 0.7; mosaic in epochs 1–2 only (--close-mosaic 4) |
+| Optimizer, schedule | Ultralytics defaults (optimizer=auto, linear LR decay, warm-up) |
+| Weights used | last.pt (final epoch) |
+| Inference | imgsz 1280, confidence >= 0.01, at most 500 boxes per frame |
+| Temporal | iou 0.5, ema 0.7, new_track 0.3, propagate 0.5, decay 0.8; weight, max_age and motion as selected on the 4 tuning clips |
+| Seed | Ultralytics defaults: seed=0, deterministic=True |
 
 
 **How to run the final model**:
@@ -244,4 +244,3 @@ python -m src.models.yolo_baseline predict --weights runs/yolo11m_1280_e6_aug_tr
 python -m src.analysis.temporal apply --pred submission_raw.csv --images-csv data/test_images.csv \
     --out submission_temporal.csv --weight <W> --max-age <A> [--motion]
 ```
-After a disconnect, add `--resume` to a `train` command to continue from `last.pt`.
