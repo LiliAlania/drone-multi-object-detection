@@ -88,7 +88,7 @@ Every 5th val frame (570 frames), COCO AP with maxDets 500.
 
 | Detector | Setting | Train frames / epochs | mAP | AP50 | AP_small | AP_medium | AP_large | ms / img |
 |---|---|---|---|---|---|---|---|---|
-| **Faster R-CNN** | `base` (Smooth L1, pos 0.25, 2000 proposals) | every 5th / 5 | **0.2371** | **0.4870** | 0.0910 | **0.225** | **0.422** | 548.7 |
+| Faster R-CNN | (Smooth L1, pos 0.25, 2000 proposals) | every 5th / 5 | 0.2371 | 0.4870 | 0.0910 | 0.225 | 0.422 | 548.7 |
 | Faster R-CNN | initial run | every 20th / 6 | 0.1675 | 0.3611 | 0.0873 | 0.165 | 0.301 | 243.9* |
 | YOLO11m | P3–P5 heads, 1280, `close_mosaic` 2 | every 5th / 12 | 0.1996 | 0.3899 | **0.1125** | 0.190 | 0.330 | 94.9 |
 | YOLO11s | P2–P5 heads, 1280 | every 5th / 12 | 0.1791 | 0.3547 | 0.0769 | 0.166 | 0.314 | 57.4 |
