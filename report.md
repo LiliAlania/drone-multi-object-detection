@@ -5,15 +5,6 @@ course: Artificial Intelligence · UCU
 date: 2026-11-16
 ---
 
-## Introduction
-
-The task is to detect 8 classes of objects (person, bicycle, car, van, truck, tricycle, bus, motor) in frames of
-drone videos (VisDrone-VID, Kaggle competition). The score is COCO mAP@[.5:.95] with up to 500 detections per frame.
-The data is hard for four reasons: most objects are only 10–40 px across, scenes are dense, the classes are very
-unequal, and consecutive frames are almost identical. We compared four detector families (two-stage anchor-based,
-one-stage anchor-based, anchor-free, query-based) under one evaluation protocol and tested one temporal
-post-processing method.
-
 ## 1. Methodology and motivation
 
 ### 1.1 What the data told us (EDA)
