@@ -88,9 +88,12 @@ Every 5th val frame (570 frames), COCO AP with maxDets 500.
 
 | Detector | Setting | Train frames / epochs | mAP | AP50 | AP_small | AP_medium | AP_large | ms / img |
 |---|---|---|---|---|---|---|---|---|
-| **Faster R-CNN** | `base` (Smooth L1, pos 0.25, 2000 proposals) | every 5th / 5 | **0.2371** | **0.4870** | **0.0910** | **0.225** | **0.422** | 548.7 |
+| **Faster R-CNN** | `base` (Smooth L1, pos 0.25, 2000 proposals) | every 5th / 5 | **0.2371** | **0.4870** | 0.0910 | **0.225** | **0.422** | 548.7 |
 | Faster R-CNN | initial run | every 20th / 6 | 0.1675 | 0.3611 | 0.0873 | 0.165 | 0.301 | 243.9* |
+| YOLO11m | P3–P5 heads, 1280, `close_mosaic` 2 | every 5th / 12 | 0.1996 | 0.3899 | **0.1125** | 0.190 | 0.330 | 94.9 |
 | YOLO11s | P2–P5 heads, 1280 | every 5th / 12 | 0.1791 | 0.3547 | 0.0769 | 0.166 | 0.314 | 57.4 |
+| YOLO11s | 960, `close_mosaic` 2 | every 5th / 12 | 0.1637 | 0.3177 | 0.0788 | 0.165 | 0.265 | 42.9 |
+| YOLO11s | 960 | every 5th / 12 | 0.1594 | 0.3074 | 0.0705 | 0.158 | 0.275 | 54.6 |
 | YOLO11s | initial, 640 | every 5th / 12 | 0.1239 | 0.2445 | 0.0613 | 0.116 | 0.247 | 37.7 |
 | RetinaNet | small anchors | every 5th / 12 | 0.1459 | 0.3151 | 0.0608 | 0.136 | 0.278 | 140.2 |
 | RetinaNet | default anchors | every 5th / 12 | 0.1468 | 0.2820 | 0.0423 | 0.134 | 0.310 | 126.6 |
@@ -108,9 +111,12 @@ The initial Faster R-CNN ran at a short side of 640, the tuned one at 1080.
 | YOLO11s | 640 → 960 | 0.1239 → 0.1594 | +0.036 |
 | YOLO11s | 960 → 1280 | 0.1594 → 0.1709 | +0.012 |
 | YOLO11s | + P2 head at 1280 | 0.1709 → 0.1791 | +0.008 |
+| YOLO11s | 960: mosaic off for the last 2 epochs instead of 10 (`close_mosaic` 10 → 2) | 0.1594 → 0.1637 | +0.004 |
+| YOLO11s → YOLO11m | at 1280 (P3–P5 heads, `close_mosaic` 2) | 0.1709 → 0.1996 | +0.029 |
 | RetinaNet | `topk_candidates` 1000 → 2000 at inference | 0.1468 → 0.1569 | +0.010 |
 | RetinaNet | small anchors | 0.1468 → 0.1459 (AP_small 0.042 -> 0.061) | 0.000 |
 | RetinaNet + temporal | rescoring with past frames (held-out clips) | 0.1477 → 0.1505 | +0.003 |
+| YOLO11m + temporal | `weight` 0.7, `max_age` 0, motion (3 held-out clips; AP_small 0.102 → 0.103) | 0.1880 → 0.1906 | +0.003 |
 
 The biggest improvements come from giving the network more pixels per object: native resolution for Faster R-CNN and
 1280 px for YOLO. Changes to the loss or the anchors move AP between object sizes but almost do not change the total.
