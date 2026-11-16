@@ -5,18 +5,7 @@ course: Artificial Intelligence · UCU
 date: 2026-11-16
 ---
 
-## Introduction
-
-The task is to detect 8 classes of objects (person, bicycle, car, van, truck, tricycle, bus, motor) in frames of
-drone videos (VisDrone-VID, Kaggle competition). The score is COCO mAP@[.5:.95] with up to 500 detections per frame.
-The data is hard for four reasons: most objects are only 10–40 px across, scenes are dense, the classes are very
-unequal, and consecutive frames are almost identical. We compared four detector families (two-stage anchor-based,
-one-stage anchor-based, anchor-free, query-based) under one evaluation protocol and tested one temporal
-post-processing method.
-
-## 1. Methodology and motivation
-
-### 1.1 What the data told us (EDA)
+### What the data told us (EDA)
 
 All numbers come from [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb) and
 [`notebooks/data_temporality.ipynb`](notebooks/data_temporality.ipynb).
@@ -45,7 +34,7 @@ All numbers come from [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb) and
 - **Train and val clips are disjoint.** No clip is shared.
   *What we did:* used val as a test of generalisation to new scenes.
 
-### 1.2 Data preparation
+### Data preparation
 
 The steps below are the ones used for every model whose results are reported in Section 2.
 
@@ -67,7 +56,7 @@ The steps below are the ones used for every model whose results are reported in 
 We also built a tiling pipeline (640 px tiles with 20% overlap, ignored regions painted gray, rare-class tiles
 repeated, sliced inference with SAHI).
 
-### 1.3 Validation design
+### Validation design
 
 - **Split:** we validate on the official val split. Its 7 clips do not occur in train, so neighbouring frames of
   one video never fall on both sides.
@@ -80,7 +69,7 @@ repeated, sliced inference with SAHI).
   selected on development clips and the gain is reported only on held-out clips.
 - One seed per setting. Differences below ~0.002 mAP are treated as noise.
 
-### 1.4 Models
+### Models
 
 - **Two-stage, anchor-based: Faster R-CNN** ResNet-50 FPN v2 (torchvision, COCO-pretrained), anchors
   8/16/32/64/128 px on P2–P6 × ratios 0.5/1/2.
@@ -94,7 +83,7 @@ repeated, sliced inference with SAHI).
 - **Temporal:** causal tracking + rescoring on top of a frozen RetinaNet.
   *Why:* uses the video structure that single-frame detectors ignore.
 
-### 1.5 Tuning strategy
+### Tuning strategy
 
 Each experiment changes one parameter from a baseline with everything else fixed:
 
@@ -107,9 +96,8 @@ Each experiment changes one parameter from a baseline with everything else fixed
 - **RT-DETR-L** (8 epochs, AdamW lr 1e-5): 300 vs 200 queries; matcher costs (class/bbox/GIoU) 2/5/2 vs 2/7/3.
 - **Temporal:** rescoring weight and propagation settings, selected on development clips.
 
-## 2. Results and analysis
 
-### 2.1 Benchmark
+### Benchmark
 
 Every 5th val frame (570 frames), COCO AP with maxDets 500. The best setting of each family, plus the initial one:
 
@@ -127,7 +115,7 @@ Every 5th val frame (570 frames), COCO AP with maxDets 500. The best setting of 
 
 ![AP by object size](images/outcomes.png)
 
-### 2.2 Incremental improvements
+### Incremental improvements
 
 | Step | Change | mAP | Δ |
 |---|---|---|---|
@@ -142,7 +130,7 @@ Every 5th val frame (570 frames), COCO AP with maxDets 500. The best setting of 
 The largest gains come from giving the network more pixels per object: native resolution for Faster R-CNN and
 1280 px for YOLO. Changes to the loss or the anchors move AP between object sizes but barely change the total.
 
-### 2.3 Feature experiments
+### Feature experiments
 
 **Faster R-CNN parameters** ([`docs/faster_rcnn.md`](docs/faster_rcnn.md)):
 
@@ -176,7 +164,7 @@ lies inside its box, so the head mostly reads the surroundings.
 head at 640 gives the same coverage as 1280 without P2, yet its AP_small is much lower (0.057 vs 0.082). So the
 limit for small objects is the number of pixels the backbone sees, not only the label assignment.
 
-### 2.4 Unsuccessful attempts
+### Unsuccessful attempts
 
 - **RT-DETR-L** reached only 0.019 mAP, about one eighth of RetinaNet, and plateaued from epoch 3. The 200-query
   run did not learn at all (mAP 0 at every epoch); we did not find the cause. With 8 epochs, lr 1e-5, batch 1
@@ -188,7 +176,7 @@ limit for small objects is the number of pixels the backbone sees, not only the 
 - **Temporal post-processing** gave only +0.003 mAP on held-out clips. Gains were consistent on all 5 held-out
   clips (+0.0025 to +0.0055) and larger in dense frames (+0.005), but small in absolute terms.
 
-### 2.5 Failure cases
+### Failure cases
 
 1. **An unseen 4K clip.** The val clip `uav0000268_05773_v` is 3840×2160, a resolution that no train clip has,
    and it holds 34% of val frames. Faster R-CNN shrinks it by 2 to fit a short side of 1080: recall drops to
@@ -202,7 +190,7 @@ limit for small objects is the number of pixels the backbone sees, not only the 
 
 ![Faster R-CNN RoI-head confusion on exact GT boxes](images/head_confusion.png)
 
-### 2.6 Conclusions
+### Conclusions
 
 - **Resolution matters most.** Native-resolution input added +0.070 mAP to Faster R-CNN, and 640 → 1280 added
   +0.047 to YOLO11s. Loss and anchor changes stayed within ±0.002.
@@ -215,7 +203,7 @@ limit for small objects is the number of pixels the backbone sees, not only the 
 - **Limits:** one seed per setting; unequal epochs across families (5 for Faster R-CNN, 8 for RT-DETR, 12 for
   YOLO and RetinaNet).
 
-## 3. Final model and run instructions
+## Final model and run instructions
 
 **Selected model: YOLO11m at 1280 px + temporal post-processing**
 ([`notebooks/08_temporal_yolo.ipynb`](notebooks/08_temporal_yolo.ipynb)).
