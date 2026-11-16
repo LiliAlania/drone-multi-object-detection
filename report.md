@@ -7,9 +7,9 @@ date: 2026-11-16
 
 ## 1. Methodology and motivation
 
-### 1.1 What the data told us (EDA)
+### 1.1 Data analysis
 
-All numbers come from [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb) and
+All numbers are from [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb) and
 [`notebooks/data_temporality.ipynb`](notebooks/data_temporality.ipynb).
 
 | Split | Clips | Frames | Resolutions |
@@ -18,83 +18,65 @@ All numbers come from [`notebooks/01_eda.ipynb`](notebooks/01_eda.ipynb) and
 | val | 7 | 2,846 | 5 (incl. one 3840×2160 clip) |
 | test | 48 | 3,811 | 6 (680×382 to 1920×1080) |
 
-- **Objects are tiny.** At a 640 px input, 69% of boxes have a side < 16 px (22% at 1280, 13% at 1536).
-  *What we did:* kept frames close to native resolution, used small anchors, raised the YOLO resolution, added a
-  stride-4 P2 head, and implemented YOLO with tiles.
+- **The objects are small.** At a 640 px input, 69% of boxes have a side smaller than 16 px. Because of that, we used small anchors, raised the YOLO resolution, added a stride-4 P2 head, and implemented YOLO with tiles.
 - **Small anchors are needed.** With default anchors (base 32 px), 92% of small boxes have no anchor with
-  IoU ≥ 0.5; anchors from 16 px leave 19.6%.
-  *What we did:* anchors 8–128 px for Faster R-CNN and from 16 px for RetinaNet.
+  IoU more than 0.5; anchors from 16 px leave 19.6%.
+  We used anchors 8–128 px for Faster R-CNN and from 16 px for RetinaNet.
 - **Classes are very unequal.** Car has 505k train boxes, bus only 9.7k.
-  *What we did:* reported per-class AP; class balancing is listed as future work.
-- **Consecutive frames are near-duplicates.** Same-track IoU is 0.85 at lag 1; with every 5th frame only 0.7% of
-  tracks are never seen.
-  *What we did:* trained on every 5th frame of each clip.
-- **Ignored regions are common.** 72% of frames have at least one; they cover 2.3% of the frame on average.
-  *What we did:* handled them as `iscrowd` in evaluation (see 1.2).
-- **Density is bounded.** At most 180 objects per frame (p99 140).
-  *What we did:* nothing extra is needed; the 500-detection cap never limits recall.
-- **Train and val clips are disjoint.** No clip is shared.
-  *What we did:* used val as a test of generalisation to new scenes.
+- **Consecutive frames are almost duplicates.** Same-track IoU is 0.85 at lag 1; with every 5th frame only 0.7% of
+  tracks are never seen, so we trained on every 5th frame of each clip.
+- **Ignored regions are common.** 72% of frames have at least one; they cover 2.3% of the frame.
+  We handled them as `iscrowd` in evaluation (1.2).
 
 ### 1.2 Data preparation
 
-The steps below are the ones used for every model whose results are reported in Section 2.
+We used these steps for every model in Section 2.
 
-1. **Ignored regions.** In the COCO file every ignored
-   region is repeated several times per frame (0 "ignored region", 11 "others"; for example 64 entries but only 8 unique boxes in one frame). We removed 446,901 duplicates in train and 27,965 in val. On 20 sampled frames per split the COCO and YOLO boxes match. They are not used as training targets: the training labels contain only the 8
-   classes.
-2. **Frame subsampling.** We kept every 5th frame **within each clip**, in frame
+1. **Ignored regions.** The COCO annotations had many duplicate ignored regions. For example, one frame had 64 entries but only 8 unique boxes. We removed 446,901 duplicates from train and 27,965 from val. We also checked 20 frames from each split and confirmed that the COCO and YOLO boxes matched. Ignored regions were excluded from training, which used only the 8 object classes.
+2. **Frame subsampling.** We kept every 5th frame from each clip, in frame
    order, so every clip stays represented: 4,868 train frames (of 24,201) and 571 val frames. 
-3. **Per-model input processing.**
-   - *Faster R-CNN:* YOLO boxes are converted to pixel `x1 y1 x2 y2` and clipped to the image; boxes with a side
-     under 1 px are dropped; labels are shifted by +1 (0 is background); pixels are scaled to [0, 1]. Frames
-     are resized to a short side of 1080 (long side ≤ 1920), i.e. close to native size. The only augmentation
+3. **Model input processing.**
+   - Faster R-CNN: YOLO boxes are converted to pixel `x1 y1 x2 y2` and clipped to the image; boxes with a side
+     smaller than 1 px are dropped; labels are shifted by +1 (0 is the background); pixels are scaled to [0, 1]. Frames
+     are resized to a short side of 1080 (long side <= 1920), close to native size. The only augmentation
      is a horizontal flip with probability 0.5.
-   - *RetinaNet:* the same dataset class and flip, but resized to a short side of 640 (long side ≤ 1280).
-   - *YOLO11:* Ultralytics letterboxes to `imgsz` (640 / 960 / 1280) and applies its default augmentation
+   - RetinaNet: the same dataset class and flip, but resized to a short side of 640 (long side <= 1280).
+   - YOLO11: Ultralytics letterboxes to `imgsz` (640 / 960 / 1280) and applies its default augmentation
      (mosaic, ±50% zoom, HSV, flip); mosaic is switched off for the last 10 epochs.
-   - *RT-DETR-L:* Ultralytics pipeline at 640 px, every 5th frame.
+   - RT-DETR-L: Ultralytics pipeline at 640 px, every 5th frame.
 
-We also built a tiling pipeline (640 px tiles with 20% overlap, ignored regions painted gray, rare-class tiles
-repeated, sliced inference with SAHI).
+We also tested splitting images into smaller 640 px tiles with 20% overlap. We covered ignored regions in gray, repeated tiles with rare classes, and used SAHI to combine predictions from the tiles.
 
 ### 1.3 Validation design
 
-- **Split:** we validate on the official val split. Its 7 clips do not occur in train, so neighbouring frames of
-  one video never fall on both sides.
-- **Frames:** every 5th val frame (570 frames). This is 5× faster than all 2,846 frames, and consecutive frames
-  add little information.
+- **Split:** we validate on official val split.
+- **Frames:** every 5th val frame (570 frames).
 - **Metric:** one COCO evaluation for all models: pycocotools, mAP@[.5:.95], AP50, AP75, AP by object size
-  (small < 32², medium < 96², large), maxDets 500, ignored regions as `iscrowd`. Speed is reported as
-  ms per image on a Tesla T4.
+  (small < 32², medium < 96², large), maxDets 500, ignored regions as iscrowd. 
 - **Temporal post-processing** needs consecutive frames, so it is evaluated on all frames. Its parameters were
-  selected on development clips and the gain is reported only on held-out clips.
-- One seed per setting. Differences below ~0.002 mAP are treated as noise.
+  selected on development clips and the improvement is only on unseen clips.
+- **One seed per setting** Differences smaller than 0.002 mAP are treated as noise.
 
 ### 1.4 Models
 
 - **Two-stage, anchor-based: Faster R-CNN** ResNet-50 FPN v2 (torchvision, COCO-pretrained), anchors
   8/16/32/64/128 px on P2–P6 × ratios 0.5/1/2.
-  *Why:* the second stage re-examines each candidate on aligned features, which should help on small, crowded objects.
-- **One-stage, anchor-based: RetinaNet** ResNet-50 FPN v2 (COCO-pretrained), default vs smaller anchors.
-  *Why:* dense prediction with focal loss; checks how much anchor size matters.
-- **Anchor-free: YOLO11s** (Ultralytics, COCO-pretrained) at 640/960/1280, optional P2 head.
-  *Why:* fast; tests resolution and grid density instead of anchors.
-- **Query-based: RT-DETR-L** (Ultralytics, COCO-pretrained).
-  *Why:* set prediction with Hungarian matching, no NMS.
-- **Temporal:** causal tracking + rescoring on top of a frozen RetinaNet.
-  *Why:* uses the video structure that single-frame detectors ignore.
+  The second stage re-examines each candidate on aligned features, which should help on small, crowded objects.
+- **One-stage, anchor-based: RetinaNet** ResNet-50 FPN v2 (COCO-pretrained), we compared default and smaller anchors to evaluate the impact of anchor size in dense prediction with focal loss.
+- **Anchor-free: YOLO11s** (Ultralytics, COCO-pretrained), tested at 640/960/1280 px with an optional P2 head to investigate the effects of input resolution and grid density.
+- **Query-based: RT-DETR-L** (Ultralytics, COCO-pretrained), using set prediction with Hungarian matching instead of NMS.
+- **Temporal:** We applied causal tracking and confidence rescoring to a frozen RetinaNet to use information from previous video frames.
 
 ### 1.5 Tuning strategy
 
-Each experiment changes one parameter from a baseline with everything else fixed:
+Every experiment changes one parameter with everything else fixed:
 
 - **Faster R-CNN** (5 epochs, every 5th frame, SGD lr 0.01, momentum 0.9, wd 1e-4, ×0.1 after epochs 3 and 4,
   batch 4, AMP): box loss Smooth L1 vs GIoU; RoI positive fraction 0.25 vs 0.5; RPN proposals at test time
   300 / 1000 / 2000.
-- **RetinaNet** (12 epochs): default vs small anchors; focal α = 0.5; `topk_candidates`, NMS and score
+- **RetinaNet** (12 epochs): default vs small anchors; focal α = 0.5; topk_candidates, NMS and score
   thresholds at inference.
-- **YOLO11s** (12 epochs): input size 640 → 960 → 1280, then the P2 head at the best size and at 640.
+- **YOLO11s** (12 epochs): input size 640 -> 960 -> 1280, then the P2 head at the best size and at 640.
 - **RT-DETR-L** (8 epochs, AdamW lr 1e-5): 300 vs 200 queries; matcher costs (class/bbox/GIoU) 2/5/2 vs 2/7/3.
 - **Temporal:** rescoring weight and propagation settings, selected on development clips.
 
@@ -102,7 +84,7 @@ Each experiment changes one parameter from a baseline with everything else fixed
 
 ### 2.1 Benchmark
 
-Every 5th val frame (570 frames), COCO AP with maxDets 500. The best setting of each family, plus the initial one:
+Every 5th val frame (570 frames), COCO AP with maxDets 500.
 
 | Detector | Setting | Train frames / epochs | mAP | AP50 | AP_small | AP_medium | AP_large | ms / img |
 |---|---|---|---|---|---|---|---|---|
@@ -114,7 +96,7 @@ Every 5th val frame (570 frames), COCO AP with maxDets 500. The best setting of 
 | RetinaNet | default anchors | every 5th / 12 | 0.1468 | 0.2820 | 0.0423 | 0.134 | 0.310 | 126.6 |
 | RT-DETR-L | 300 queries, matcher 2/7/3 | every 5th / 8 | 0.0189 | 0.0371 | 0.0093 | 0.019 | 0.044 | 86.3 |
 
-\* the initial Faster R-CNN ran at a short side of 640, the tuned one at 1080.
+The initial Faster R-CNN ran at a short side of 640, the tuned one at 1080.
 
 ![AP by object size](images/outcomes.png)
 
@@ -127,11 +109,11 @@ Every 5th val frame (570 frames), COCO AP with maxDets 500. The best setting of 
 | YOLO11s | 960 → 1280 | 0.1594 → 0.1709 | +0.012 |
 | YOLO11s | + P2 head at 1280 | 0.1709 → 0.1791 | +0.008 |
 | RetinaNet | `topk_candidates` 1000 → 2000 at inference | 0.1468 → 0.1569 | +0.010 |
-| RetinaNet | small anchors | 0.1468 → 0.1459 (AP_small 0.042 → 0.061) | 0.000 |
+| RetinaNet | small anchors | 0.1468 → 0.1459 (AP_small 0.042 -> 0.061) | 0.000 |
 | RetinaNet + temporal | rescoring with past frames (held-out clips) | 0.1477 → 0.1505 | +0.003 |
 
-The largest gains come from giving the network more pixels per object: native resolution for Faster R-CNN and
-1280 px for YOLO. Changes to the loss or the anchors move AP between object sizes but barely change the total.
+The biggest improvements come from giving the network more pixels per object: native resolution for Faster R-CNN and
+1280 px for YOLO. Changes to the loss or the anchors move AP between object sizes but almost do not change the total.
 
 ### 2.3 Feature experiments
 
@@ -145,9 +127,9 @@ The largest gains come from giving the network more pixels per object: native re
 | `base`, 1000 proposals | **0.2371** | 0.4866 | 0.197 | 0.0909 | 0.422 | 483.6 |
 | `base`, 300 proposals | 0.2335 | 0.4752 | 0.196 | 0.0899 | 0.418 | 440.8 |
 
-- GIoU does not help and lowers AP_small. For a box of a few pixels, a one-pixel shift changes the IoU a lot, so an
-  IoU-based loss is noisiest exactly on small objects.
-- A positive fraction of 0.5 gives the best AP_small (+0.011) at the cost of medium objects; the total is unchanged.
+- GIoU does not help and lowers AP_small. For a small box of a few pixels, a one-pixel shift changes the IoU by a lot, so an
+  IoU-based loss is noisiest on small objects.
+- A positive fraction of 0.5 gives the best AP_small (+0.011) at the cost of medium objects, the total stays the same.
 - 1000 proposals are as good as 2000 and 12% faster; 300 lose 0.004 mAP, because dense frames need several
   proposals per object.
 
@@ -159,13 +141,9 @@ The largest gains come from giving the network more pixels per object: native re
 | medium | 0.917 | 0.618 | 0.657 |
 | large | 0.992 | 0.805 | 0.831 |
 
-The RPN finds 91% of all objects. Most losses happen in the second stage: given the exact box of a small object,
-the head calls 62% of them background. Grad-CAM shows that only 14–18% of the evidence for a small detection
-lies inside its box, so the head mostly reads the surroundings.
+The RPN finds 91% of all objects, but many are lost in the second stage. Even when given the correct box, the model classifies 62% of small objects as background. Grad-CAM shows that only 14–18% of the information used to detect small objects comes from inside their boxes, meaning the model relies mostly on the surrounding area.
 
-**YOLO grid points.** At 640 px, 11.3% of small objects have no stride-8 grid point; at 1280 only 0.9%. A P2
-head at 640 gives the same coverage as 1280 without P2, yet its AP_small is much lower (0.057 vs 0.082). So the
-limit for small objects is the number of pixels the backbone sees, not only the label assignment.
+**YOLO grid points.** At 640 px, 11.3% of small objects have no stride-8 grid point inside of them, compared to only 0.9% at 1280 px. Adding a P2 head at 640 px solves this problem, but AP_small is still much lower (0.057 vs 0.082). This suggests that higher image resolution matters more for detecting small objects than adding more grid points.
 
 ### 2.4 Unsuccessful attempts
 
